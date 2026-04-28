@@ -1,0 +1,33 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+
+# Build output
+/build/
+/bin/
+/dist/
+frontend/dist/
+
+# Wails
+wailsjs/
+
+# Dependency directories
+vendor/
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ChronoDraftAEx data
+.chronodraft/

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "name": "ChronoDraftAEx",
+  "outputfilename": "ChronoDraftAEx",
+  "frontend": {
+    "dir": "./frontend",
+    "install": "npm install",
+    "build": "npm run build",
+    "dev": "npm run dev",
+    "package": "npm"
+  },
+  "build": {
+    "dir": "build",
+    "ldflags": ""
+  }
+}

@@ -1,0 +1,16 @@
+# Build artifacts
+src/build/
+src/bin/
+src/frontend/dist/
+src/frontend/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# ChronoDraftAEx local data
+.chronodraft/
