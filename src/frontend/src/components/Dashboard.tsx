@@ -1,20 +1,6 @@
 import { useState, useEffect } from 'react'
-import type { StructuredEntry, SearchResult } from '../types'
-
-// Wails 运行时绑定将在构建时注入 window.go
-// 开发环境中使用 mock 数据
-declare global {
-  interface Window {
-    go?: {
-      main: {
-        App: {
-          SearchKnowledge(query: string, topK: number): Promise<SearchResult[]>
-          CaptureChanges(sessionID: string): Promise<StructuredEntry>
-        }
-      }
-    }
-  }
-}
+import { SearchKnowledge, CaptureChanges } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import type { StructuredEntry } from '../types'
 
 function Dashboard() {
   const [entries, setEntries] = useState<StructuredEntry[]>([])
@@ -24,29 +10,10 @@ function Dashboard() {
   const search = async (q: string) => {
     setLoading(true)
     try {
-      if (window.go?.main.App) {
-        const results = await window.go.main.App.SearchKnowledge(q, 10)
-        setEntries(results.map(r => r.entry))
-      } else {
-        // Mock data for development
-        setEntries([
-          {
-            id: '1',
-            session_id: 'sess-001',
-            timestamp: new Date().toISOString(),
-            summary: '重构认证模块，引入 OAuth2 PKCE 流程',
-            design_decision: '为提升 SPA 应用的安全性，选择 PKCE 替代传统 implicit 流程，防止授权码截获攻击。',
-            impact_analysis: '影响前端登录页面、后端 /auth 路由及 token 刷新逻辑。',
-            affected_files: [
-              { path: 'src/auth/google-oauth.ts', change_type: 'modify' },
-              { path: 'src/auth/pkce-helper.ts', change_type: 'add' },
-            ],
-            tags: ['auth', 'security', 'oauth2'],
-          },
-        ])
-      }
+      const results = await SearchKnowledge(q, 10)
+      setEntries(results.map((r: any) => r.entry))
     } catch (e) {
-      console.error(e)
+      console.error('搜索失败:', e)
     } finally {
       setLoading(false)
     }
@@ -55,12 +22,21 @@ function Dashboard() {
   const capture = async () => {
     setLoading(true)
     try {
-      if (window.go?.main.App) {
-        const entry = await window.go.main.App.CaptureChanges('manual-' + Date.now())
-        setEntries(prev => [entry, ...prev])
+      const entry = await CaptureChanges('manual-' + Date.now())
+      if (entry) {
+        setEntries(prev => [{
+          id: entry.id,
+          session_id: entry.session_id,
+          timestamp: entry.timestamp ? entry.timestamp.toISOString() : new Date().toISOString(),
+          summary: entry.summary,
+          design_decision: entry.design_decision,
+          impact_analysis: entry.impact_analysis,
+          affected_files: entry.affected_files || [],
+          tags: entry.tags || [],
+        }, ...prev])
       }
     } catch (e) {
-      console.error(e)
+      console.error('捕获变更失败:', e)
     } finally {
       setLoading(false)
     }

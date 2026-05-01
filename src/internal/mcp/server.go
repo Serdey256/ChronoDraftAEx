@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 )
 
 // MCPServer MCP 协议服务器
@@ -31,6 +32,8 @@ func NewMCPServer(core *memorycore.MemoryCore, addr string) *MCPServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp/snapshot", m.handleSnapshot)
 	mux.HandleFunc("/mcp/search", m.handleSearch)
+	mux.HandleFunc("/mcp/graph", m.handleGraph)
+	mux.HandleFunc("/mcp/entries", m.handleEntries)
 	mux.HandleFunc("/mcp/health", m.handleHealth)
 	m.server = &http.Server{
 		Addr:    addr,
@@ -68,9 +71,12 @@ func (m *MCPServer) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	md := GenerateAgentsMarkdown(results)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"snapshot_type": "agents_md_style",
+		"markdown":      md,
 		"entries":       results,
 		"generated_at":  "now",
 	})
@@ -111,6 +117,58 @@ func (m *MCPServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(results)
 }
 
+// handleGraph 返回知识图谱数据
+func (m *MCPServer) handleGraph(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	nodes, edges, err := m.core.GetGraphData(limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(models.GraphData{Nodes: nodes, Edges: edges})
+}
+
+// handleEntries 列出知识条目
+func (m *MCPServer) handleEntries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	offsetStr := r.URL.Query().Get("offset")
+	limitStr := r.URL.Query().Get("limit")
+	offset, limit := 0, 20
+	if o, err := strconv.Atoi(offsetStr); err == nil {
+		offset = o
+	}
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+
+	entries, err := m.core.ListEntries(offset, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
 // handleHealth 健康检查端点
 func (m *MCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -131,9 +189,14 @@ func GenerateAgentsMarkdown(results []models.SearchResult) string {
 		md += fmt.Sprintf("- **时间**: %s\n", r.Entry.Timestamp.Format("2006-01-02 15:04"))
 		md += fmt.Sprintf("- **设计决策**: %s\n", r.Entry.DesignDecision)
 		md += fmt.Sprintf("- **影响面**: %s\n", r.Entry.ImpactAnalysis)
-		md += "- **涉及文件**:\n"
-		for _, f := range r.Entry.AffectedFiles {
-			md += fmt.Sprintf("  - `%s` (%s)\n", f.Path, f.ChangeType)
+		if len(r.Entry.AffectedFiles) > 0 {
+			md += "- **涉及文件**:\n"
+			for _, f := range r.Entry.AffectedFiles {
+				md += fmt.Sprintf("  - `%s` (%s)\n", f.Path, f.ChangeType)
+			}
+		}
+		if len(r.Entry.Tags) > 0 {
+			md += fmt.Sprintf("- **标签**: %v\n", r.Entry.Tags)
 		}
 		md += "\n"
 	}

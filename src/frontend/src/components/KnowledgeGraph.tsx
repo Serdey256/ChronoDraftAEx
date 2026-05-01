@@ -1,65 +1,96 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
+import { GetGraphData } from '../../bindings/ChronoDraftAEx/chronoservice.js'
 
-interface GraphNode {
+interface SimNode extends d3.SimulationNodeDatum {
   id: string
   label: string
   type: string
-  x?: number
-  y?: number
 }
 
-interface GraphLink {
-  source: string | GraphNode
-  target: string | GraphNode
+interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   relation: string
 }
 
+const colorMap: Record<string, string> = {
+  module: '#58a6ff',
+  decision: '#d29922',
+  concept: '#238636',
+  file: '#8b949e',
+  entry: '#bc8cff',
+  tag: '#f778ba',
+}
+
+const mockNodes: SimNode[] = [
+  { id: 'auth', label: 'auth 模块', type: 'module' },
+  { id: 'security', label: 'security 模块', type: 'module' },
+  { id: 'database', label: 'database 模块', type: 'module' },
+  { id: 'oauth', label: 'OAuth2 决策', type: 'decision' },
+  { id: 'pkce', label: 'PKCE 流程', type: 'concept' },
+  { id: 'token', label: 'Token 管理', type: 'concept' },
+]
+
+const mockLinks: SimLink[] = [
+  { source: 'oauth', target: 'auth', relation: 'affects' },
+  { source: 'oauth', target: 'security', relation: 'relates_to' },
+  { source: 'pkce', target: 'oauth', relation: 'implements' },
+  { source: 'token', target: 'auth', relation: 'belongs_to' },
+  { source: 'database', target: 'auth', relation: 'depends_on' },
+]
+
 function KnowledgeGraph() {
   const svgRef = useRef<SVGSVGElement>(null)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!svgRef.current) return
 
-    // Mock data for demonstration
-    const nodes: GraphNode[] = [
-      { id: 'auth', label: 'auth 模块', type: 'module' },
-      { id: 'security', label: 'security 模块', type: 'module' },
-      { id: 'database', label: 'database 模块', type: 'module' },
-      { id: 'oauth', label: 'OAuth2 决策', type: 'decision' },
-      { id: 'pkce', label: 'PKCE 流程', type: 'concept' },
-      { id: 'token', label: 'Token 管理', type: 'concept' },
-    ]
+    const loadAndRender = async () => {
+      setLoading(true)
+      let nodes: SimNode[] = []
+      let links: SimLink[] = []
 
-    const links: GraphLink[] = [
-      { source: 'oauth', target: 'auth', relation: 'affects' },
-      { source: 'oauth', target: 'security', relation: 'relates_to' },
-      { source: 'pkce', target: 'oauth', relation: 'implements' },
-      { source: 'token', target: 'auth', relation: 'belongs_to' },
-      { source: 'database', target: 'auth', relation: 'depends_on' },
-    ]
+      try {
+        const result = await GetGraphData(100)
+        if (result?.nodes?.length) {
+          nodes = result.nodes.map((n: any) => ({ id: n.id, label: n.label, type: n.type }))
+          links = result.edges.map((e: any) => ({ source: e.source_id, target: e.target_id, relation: e.relation }))
+        }
+      } catch (e) {
+        console.warn('获取图谱数据失败', e)
+      } finally {
+        setLoading(false)
+      }
 
+      if (nodes.length === 0) {
+        nodes = mockNodes
+        links = mockLinks
+      }
+
+      renderGraph(nodes, links)
+    }
+
+    loadAndRender()
+
+    return () => {
+      if (svgRef.current) d3.select(svgRef.current).selectAll('*').remove()
+    }
+  }, [])
+
+  const renderGraph = (nodes: SimNode[], links: SimLink[]) => {
+    if (!svgRef.current) return
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
 
     const width = svgRef.current.clientWidth
     const height = svgRef.current.clientHeight
 
-    // Color mapping
-    const colorMap: Record<string, string> = {
-      module: '#58a6ff',
-      decision: '#d29922',
-      concept: '#238636',
-      file: '#8b949e',
-    }
-
-    const simulation = d3.forceSimulation(nodes as any)
-      .force('link', d3.forceLink(links).id((d: any) => d.id).distance(120))
+    const simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink<SimNode, SimLink>(links).id(d => d.id).distance(120))
       .force('charge', d3.forceManyBody().strength(-400))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collide', d3.forceCollide().radius(40))
 
-    // Links
     const link = svg.append('g')
       .attr('stroke', '#30363d')
       .attr('stroke-opacity', 0.8)
@@ -68,46 +99,41 @@ function KnowledgeGraph() {
       .join('line')
       .attr('stroke-width', 2)
 
-    // Link labels
     const linkLabel = svg.append('g')
       .selectAll('text')
       .data(links)
       .join('text')
-      .text((d: any) => d.relation)
+      .text(d => d.relation)
       .attr('font-size', 10)
       .attr('fill', '#8b949e')
       .attr('text-anchor', 'middle')
 
-    // Nodes
     const node = svg.append('g')
       .selectAll('g')
       .data(nodes)
       .join('g')
-      .call(d3.drag<SVGGElement, GraphNode>()
-        .on('start', (event, d) => {
-          if (!event.active) simulation.alphaTarget(0.3).restart()
-          d.x = event.x
-          d.y = event.y
-        })
-        .on('drag', (event, d) => {
-          d.x = event.x
-          d.y = event.y
-        })
-        .on('end', (event, d) => {
-          if (!event.active) simulation.alphaTarget(0)
-          d.x = event.x
-          d.y = event.y
-        })
-      )
+      // @ts-expect-error D3 drag type incompatibility with generic Selection
+      .call(d3.drag<SVGGElement, SimNode>().on('start', (event: any, d: any) => {
+        if (!event.active) simulation.alphaTarget(0.3).restart()
+        d.fx = d.x
+        d.fy = d.y
+      }).on('drag', (event: any, d: any) => {
+        d.fx = event.x
+        d.fy = event.y
+      }).on('end', (event: any, d: any) => {
+        if (!event.active) simulation.alphaTarget(0)
+        d.fx = null
+        d.fy = null
+      }) as unknown as (selection: d3.Selection<SVGGElement, SimNode, SVGGElement, unknown>) => void)
 
     node.append('circle')
       .attr('r', 24)
-      .attr('fill', (d: any) => colorMap[d.type] || '#8b949e')
+      .attr('fill', d => colorMap[d.type] || '#8b949e')
       .attr('stroke', '#0f1117')
       .attr('stroke-width', 2)
 
     node.append('text')
-      .text((d: any) => d.label)
+      .text(d => d.label)
       .attr('dy', 40)
       .attr('text-anchor', 'middle')
       .attr('fill', '#e6edf3')
@@ -116,28 +142,32 @@ function KnowledgeGraph() {
 
     simulation.on('tick', () => {
       link
-        .attr('x1', (d: any) => (d.source as any).x)
-        .attr('y1', (d: any) => (d.source as any).y)
-        .attr('x2', (d: any) => (d.target as any).x)
-        .attr('y2', (d: any) => (d.target as any).y)
+        .attr('x1', d => (d.source as SimNode).x ?? 0)
+        .attr('y1', d => (d.source as SimNode).y ?? 0)
+        .attr('x2', d => (d.target as SimNode).x ?? 0)
+        .attr('y2', d => (d.target as SimNode).y ?? 0)
 
       linkLabel
-        .attr('x', (d: any) => ((d.source as any).x + (d.target as any).x) / 2)
-        .attr('y', (d: any) => ((d.source as any).y + (d.target as any).y) / 2)
+        .attr('x', d => {
+          const sx = (d.source as SimNode).x ?? 0
+          const tx = (d.target as SimNode).x ?? 0
+          return (sx + tx) / 2
+        })
+        .attr('y', d => {
+          const sy = (d.source as SimNode).y ?? 0
+          const ty = (d.target as SimNode).y ?? 0
+          return (sy + ty) / 2
+        })
 
-      node.attr('transform', (d: any) => `translate(${d.x},${d.y})`)
+      node.attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`)
     })
-
-    return () => {
-      simulation.stop()
-    }
-  }, [])
+  }
 
   return (
     <div>
       <div className="page-header">
         <h2>🕸️ 知识图谱</h2>
-        <p>可视化浏览项目知识实体间的关联关系</p>
+        <p>{loading ? '加载中...' : '可视化浏览项目知识实体间的关联关系'}</p>
       </div>
       <div className="graph-container">
         <svg ref={svgRef} width="100%" height="100%" />

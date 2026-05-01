@@ -30,6 +30,9 @@ func NewMemoryCore(projectRoot, aiAPIKey, aiBaseURL, aiModel string) (*MemoryCor
 		return nil, fmt.Errorf("初始化知识库索引失败: %w", err)
 	}
 
+	// 配置嵌入模型 API（与 chat API 共享 key 和 base）
+	kbi.SetEmbeddingConfig(aiAPIKey, aiBaseURL, "")
+
 	ctx := context.Background()
 	if err := kbi.Init(ctx); err != nil {
 		return nil, fmt.Errorf("初始化知识库失败: %w", err)
@@ -70,6 +73,16 @@ func (m *MemoryCore) SearchKnowledge(query string, topK int) ([]models.SearchRes
 	return m.kbIndex.Search(m.ctx, query, topK)
 }
 
+// GetGraphData 获取图谱数据
+func (m *MemoryCore) GetGraphData(limit int) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	return m.kbIndex.GetGraphData(m.ctx, limit)
+}
+
+// ListEntries 列出知识条目
+func (m *MemoryCore) ListEntries(offset, limit int) ([]models.StructuredEntry, error) {
+	return m.kbIndex.ListEntries(offset, limit)
+}
+
 // CreateSnapshot 创建当前项目快照
 func (m *MemoryCore) CreateSnapshot(version string, dependencies []string) (*models.ProjectSnapshot, error) {
 	snapshot := &models.ProjectSnapshot{
@@ -83,6 +96,11 @@ func (m *MemoryCore) CreateSnapshot(version string, dependencies []string) (*mod
 		return nil, err
 	}
 	return snapshot, nil
+}
+
+// ListSnapshots 列出所有快照
+func (m *MemoryCore) ListSnapshots() ([]models.ProjectSnapshot, error) {
+	return m.kbIndex.ListSnapshots()
 }
 
 // Close 关闭记忆内核，释放资源

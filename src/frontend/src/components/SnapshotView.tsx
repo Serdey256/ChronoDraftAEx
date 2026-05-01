@@ -1,36 +1,60 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { ListSnapshots, CreateSnapshot } from '../../bindings/ChronoDraftAEx/chronoservice.js'
 import type { ProjectSnapshot } from '../types'
 
 function SnapshotView() {
-  const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([
-    {
-      id: 'snap-001',
-      timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
-      version: 'v0.2.0',
-      dependencies: ['react@18.3.1', 'wails@v3.0.0-alpha', 'lancedb@0.2.0'],
-      metadata: { branch: 'main', commit: 'a1b2c3d' },
-    },
-    {
-      id: 'snap-002',
-      timestamp: new Date(Date.now() - 86400000).toISOString(),
-      version: 'v0.2.1',
-      dependencies: ['react@18.3.1', 'wails@v3.0.0-alpha', 'lancedb@0.2.0', 'kuzu@0.7.0'],
-      metadata: { branch: 'main', commit: 'e4f5g6h' },
-    },
-  ])
-
+  const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([])
   const [selected, setSelected] = useState<ProjectSnapshot | null>(null)
   const [compareTarget, setCompareTarget] = useState<ProjectSnapshot | null>(null)
+  const [loading, setLoading] = useState(false)
 
-  const createSnapshot = () => {
-    const newSnap: ProjectSnapshot = {
-      id: 'snap-' + Date.now(),
-      timestamp: new Date().toISOString(),
-      version: 'v0.3.0',
-      dependencies: ['react@18.3.1', 'wails@v3.0.0-alpha', 'lancedb@0.2.0', 'kuzu@0.7.0'],
-      metadata: { branch: 'main', commit: 'latest' },
+  useEffect(() => {
+    loadSnapshots()
+  }, [])
+
+  const loadSnapshots = async () => {
+    setLoading(true)
+    try {
+      const snaps = await ListSnapshots()
+      if (snaps && snaps.length > 0) {
+        setSnapshots(snaps.map((s: any) => ({
+          id: s.id,
+          timestamp: s.timestamp ? s.timestamp.toISOString() : new Date().toISOString(),
+          version: s.version,
+          dependencies: s.dependencies || [],
+          metadata: s.metadata || {},
+        })))
+        setLoading(false)
+        return
+      }
+    } catch (e) {
+      console.warn('获取快照失败', e)
     }
-    setSnapshots(prev => [newSnap, ...prev])
+    setSnapshots([])
+    setLoading(false)
+  }
+
+  const createSnapshot = async () => {
+    setLoading(true)
+    try {
+      const newSnap = await CreateSnapshot(
+        'v' + new Date().toISOString().slice(0, 10),
+        ['react@18.3.1', 'wails@v3.0.0-alpha']
+      )
+      if (newSnap) {
+        setSnapshots(prev => [{
+          id: newSnap.id,
+          timestamp: newSnap.timestamp ? newSnap.timestamp.toISOString() : new Date().toISOString(),
+          version: newSnap.version,
+          dependencies: newSnap.dependencies || [],
+          metadata: newSnap.metadata as Record<string, string> || {},
+        }, ...prev])
+      }
+    } catch (e) {
+      console.error('创建快照失败', e)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const compareSnapshots = (a: ProjectSnapshot, b: ProjectSnapshot) => {
@@ -51,8 +75,8 @@ function SnapshotView() {
       </div>
 
       <div style={{ marginBottom: 24 }}>
-        <button className="btn btn-primary" onClick={createSnapshot}>
-          ➕ 创建当前快照
+        <button className="btn btn-primary" onClick={createSnapshot} disabled={loading}>
+          {loading ? '创建中...' : '➕ 创建当前快照'}
         </button>
       </div>
 
@@ -79,10 +103,15 @@ function SnapshotView() {
                   <span>{new Date(snap.timestamp).toLocaleDateString()}</span>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  依赖数: {snap.dependencies.length} · {snap.metadata.branch}
+                  依赖数: {snap.dependencies.length} · {snap.metadata?.branch || ''}
                 </div>
               </div>
             ))}
+            {snapshots.length === 0 && !loading && (
+              <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
+                暂无快照，点击「创建当前快照」开始
+              </div>
+            )}
           </div>
         </div>
 
@@ -94,8 +123,8 @@ function SnapshotView() {
                 <h4 style={{ fontSize: 16, marginBottom: 8 }}>{selected.version}</h4>
                 <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                   <p>时间: {new Date(selected.timestamp).toLocaleString()}</p>
-                  <p>分支: {selected.metadata.branch}</p>
-                  <p>提交: {selected.metadata.commit}</p>
+                  <p>分支: {selected.metadata?.branch || 'N/A'}</p>
+                  <p>提交: {selected.metadata?.commit || 'N/A'}</p>
                 </div>
               </div>
 

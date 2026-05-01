@@ -62,3 +62,9 @@ type SearchResult struct {
 	Score    float64         `json:"score"`
 	NodePath []KnowledgeNode `json:"node_path,omitempty"`
 }
+
+// GraphData 是知识图谱的完整数据
+type GraphData struct {
+	Nodes []KnowledgeNode `json:"nodes"`
+	Edges []KnowledgeEdge `json:"edges"`
+}

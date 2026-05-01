@@ -6,6 +6,7 @@ import (
 	"ChronoDraftAEx/pkg/models"
 	"ChronoDraftAEx/pkg/utils"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -117,8 +118,25 @@ func (d *Detector) DetectChanges(oldSnap, newSnap map[string]FileSnapshot, sessi
 
 // SaveSnapshot 将快照持久化到本地（JSON 格式）
 func (d *Detector) SaveSnapshot(snap map[string]FileSnapshot, dir string) error {
-	// TODO: 实现快照持久化逻辑
-	_ = snap
-	_ = dir
-	return nil
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "snapshot.json"), data, 0644)
+}
+
+// LoadSnapshot 从本地加载快照
+func (d *Detector) LoadSnapshot(dir string) (map[string]FileSnapshot, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "snapshot.json"))
+	if err != nil {
+		return nil, err
+	}
+	var snap map[string]FileSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, err
+	}
+	return snap, nil
 }

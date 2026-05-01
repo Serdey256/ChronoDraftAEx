@@ -29,7 +29,7 @@ export interface KnowledgeNode {
   id: string
   label: string
   type: string
-  metadata: Record<string, string>
+  metadata?: Record<string, string>
 }
 
 export interface KnowledgeEdge {
@@ -43,3 +43,11 @@ export interface SearchResult {
   score: number
   node_path?: KnowledgeNode[]
 }
+
+export interface GraphData {
+  nodes: KnowledgeNode[]
+  edges: KnowledgeEdge[]
+}
+
+// 前端类型定义（与后端 models 对应）
+// Wails v3 绑定通过 generated bindings 导入，不再使用 window.go

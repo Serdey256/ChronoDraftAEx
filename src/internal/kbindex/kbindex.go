@@ -25,12 +25,12 @@ func NewKBIndex(projectRoot string) (*KBIndex, error) {
 		return nil, err
 	}
 
-	vectorDB, err := NewVectorDB(filepath.Join(dataDir, "vectors.lance"))
+	vectorDB, err := NewVectorDB(filepath.Join(dataDir, "vectors.db"))
 	if err != nil {
 		return nil, fmt.Errorf("初始化向量数据库失败: %w", err)
 	}
 
-	graphDB, err := NewGraphDB(filepath.Join(dataDir, "graph.kuzu"))
+	graphDB, err := NewGraphDB(filepath.Join(dataDir, "graph.db"))
 	if err != nil {
 		return nil, fmt.Errorf("初始化图数据库失败: %w", err)
 	}
@@ -46,6 +46,11 @@ func NewKBIndex(projectRoot string) (*KBIndex, error) {
 		metaDB:   metaDB,
 		dataDir:  dataDir,
 	}, nil
+}
+
+// SetEmbeddingConfig 配置嵌入模型 API
+func (k *KBIndex) SetEmbeddingConfig(apiKey, apiBase, model string) {
+	k.vectorDB.SetEmbeddingConfig(apiKey, apiBase, model)
 }
 
 // Init 初始化所有数据库的 Schema
@@ -95,9 +100,24 @@ func (k *KBIndex) Search(ctx context.Context, query string, topK int) ([]models.
 	return results, nil
 }
 
+// GetGraphData 获取图谱全量数据
+func (k *KBIndex) GetGraphData(ctx context.Context, limit int) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	return k.graphDB.GetGraphData(ctx, limit)
+}
+
+// ListEntries 列出知识条目
+func (k *KBIndex) ListEntries(offset, limit int) ([]models.StructuredEntry, error) {
+	return k.metaDB.ListEntries(offset, limit)
+}
+
 // SaveSnapshot 保存项目快照
 func (k *KBIndex) SaveSnapshot(snapshot *models.ProjectSnapshot) error {
 	return k.metaDB.SaveSnapshot(snapshot)
+}
+
+// ListSnapshots 列出所有快照
+func (k *KBIndex) ListSnapshots() ([]models.ProjectSnapshot, error) {
+	return k.metaDB.ListSnapshots()
 }
 
 // Close 关闭所有数据库连接

@@ -5,8 +5,11 @@ package kbindex
 import (
 	"ChronoDraftAEx/pkg/models"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3"
+	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // MetadataStore SQLite 元数据存储
@@ -16,7 +19,7 @@ type MetadataStore struct {
 
 // NewMetadataStore 创建元数据存储实例
 func NewMetadataStore(dbPath string) (*MetadataStore, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		return nil, err
 	}
@@ -32,15 +35,15 @@ CREATE TABLE IF NOT EXISTS entries (
 	summary TEXT,
 	design_decision TEXT,
 	impact_analysis TEXT,
-	tags TEXT, -- JSON array
+	tags TEXT,
 	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS snapshots (
 	id TEXT PRIMARY KEY,
 	version TEXT,
-	dependencies TEXT, -- JSON array
-	metadata TEXT,     -- JSON object
+	dependencies TEXT,
+	metadata TEXT,
 	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -49,6 +52,7 @@ CREATE TABLE IF NOT EXISTS file_changes (
 	entry_id TEXT NOT NULL,
 	path TEXT NOT NULL,
 	change_type TEXT NOT NULL,
+	diff TEXT,
 	FOREIGN KEY (entry_id) REFERENCES entries(id)
 );
 
@@ -62,31 +66,181 @@ CREATE INDEX IF NOT EXISTS idx_file_changes_entry ON file_changes(entry_id);
 
 // SaveEntry 保存结构化条目到 SQLite
 func (m *MetadataStore) SaveEntry(entry *models.StructuredEntry) error {
-	// TODO: 实现插入逻辑，包括 tags JSON 序列化
-	_ = entry
-	return nil
+	tagsJSON, err := json.Marshal(entry.Tags)
+	if err != nil {
+		return fmt.Errorf("序列化 tags 失败: %w", err)
+	}
+
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		`INSERT OR REPLACE INTO entries (id, session_id, summary, design_decision, impact_analysis, tags, timestamp)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		entry.ID,
+		entry.SessionID,
+		entry.Summary,
+		entry.DesignDecision,
+		entry.ImpactAnalysis,
+		string(tagsJSON),
+		entry.Timestamp.Format(time.RFC3339),
+	)
+	if err != nil {
+		return fmt.Errorf("插入条目失败: %w", err)
+	}
+
+	for _, fc := range entry.AffectedFiles {
+		_, err = tx.Exec(
+			`INSERT INTO file_changes (entry_id, path, change_type, diff) VALUES (?, ?, ?, ?)`,
+			entry.ID, fc.Path, fc.ChangeType, fc.Diff,
+		)
+		if err != nil {
+			return fmt.Errorf("插入文件变更记录失败: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetEntryByID 根据 ID 查询条目
 func (m *MetadataStore) GetEntryByID(id string) (*models.StructuredEntry, error) {
-	// TODO: 实现查询逻辑
-	_ = id
-	return nil, fmt.Errorf("not implemented")
+	row := m.db.QueryRow(
+		`SELECT id, session_id, summary, design_decision, impact_analysis, tags, timestamp
+		 FROM entries WHERE id = ?`, id,
+	)
+
+	var entry models.StructuredEntry
+	var tagsJSON string
+	var ts string
+	err := row.Scan(&entry.ID, &entry.SessionID, &entry.Summary, &entry.DesignDecision,
+		&entry.ImpactAnalysis, &tagsJSON, &ts)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("条目 %s 不存在", id)
+		}
+		return nil, err
+	}
+
+	if err := json.Unmarshal([]byte(tagsJSON), &entry.Tags); err != nil {
+		entry.Tags = []string{}
+	}
+	entry.Timestamp, _ = time.Parse(time.RFC3339, ts)
+
+	entry.AffectedFiles, err = m.getFileChanges(entry.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &entry, nil
 }
 
-// ListEntries 分页列出条目
+// ListEntries 分页列出条目（按时间倒序）
 func (m *MetadataStore) ListEntries(offset, limit int) ([]models.StructuredEntry, error) {
-	// TODO: 实现分页查询
-	_ = offset
-	_ = limit
-	return nil, fmt.Errorf("not implemented")
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := m.db.Query(
+		`SELECT id, session_id, summary, design_decision, impact_analysis, tags, timestamp
+		 FROM entries ORDER BY timestamp DESC LIMIT ? OFFSET ?`, limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []models.StructuredEntry
+	for rows.Next() {
+		var entry models.StructuredEntry
+		var tagsJSON string
+		var ts string
+		if err := rows.Scan(&entry.ID, &entry.SessionID, &entry.Summary, &entry.DesignDecision,
+			&entry.ImpactAnalysis, &tagsJSON, &ts); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(tagsJSON), &entry.Tags); err != nil {
+			entry.Tags = []string{}
+		}
+		entry.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		entry.AffectedFiles, _ = m.getFileChanges(entry.ID)
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
 }
 
 // SaveSnapshot 保存项目快照
 func (m *MetadataStore) SaveSnapshot(snapshot *models.ProjectSnapshot) error {
-	// TODO: 实现快照保存
-	_ = snapshot
-	return nil
+	depsJSON, err := json.Marshal(snapshot.Dependencies)
+	if err != nil {
+		return fmt.Errorf("序列化 dependencies 失败: %w", err)
+	}
+	metaJSON, err := json.Marshal(snapshot.Metadata)
+	if err != nil {
+		return fmt.Errorf("序列化 metadata 失败: %w", err)
+	}
+
+	_, err = m.db.Exec(
+		`INSERT OR REPLACE INTO snapshots (id, version, dependencies, metadata, timestamp)
+		 VALUES (?, ?, ?, ?, ?)`,
+		snapshot.ID,
+		snapshot.Version,
+		string(depsJSON),
+		string(metaJSON),
+		snapshot.Timestamp.Format(time.RFC3339),
+	)
+	return err
+}
+
+// ListSnapshots 列出所有快照（按时间倒序）
+func (m *MetadataStore) ListSnapshots() ([]models.ProjectSnapshot, error) {
+	rows, err := m.db.Query(
+		`SELECT id, version, dependencies, metadata, timestamp FROM snapshots ORDER BY timestamp DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var snapshots []models.ProjectSnapshot
+	for rows.Next() {
+		var snap models.ProjectSnapshot
+		var depsJSON, metaJSON, ts string
+		if err := rows.Scan(&snap.ID, &snap.Version, &depsJSON, &metaJSON, &ts); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(depsJSON), &snap.Dependencies)
+		json.Unmarshal([]byte(metaJSON), &snap.Metadata)
+		snap.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		snapshots = append(snapshots, snap)
+	}
+	return snapshots, rows.Err()
+}
+
+// getFileChanges 获取某条目关联的文件变更
+func (m *MetadataStore) getFileChanges(entryID string) ([]models.FileChange, error) {
+	rows, err := m.db.Query(
+		`SELECT path, change_type, diff FROM file_changes WHERE entry_id = ?`, entryID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var changes []models.FileChange
+	for rows.Next() {
+		var fc models.FileChange
+		var diff sql.NullString
+		if err := rows.Scan(&fc.Path, &fc.ChangeType, &diff); err != nil {
+			return nil, err
+		}
+		if diff.Valid {
+			fc.Diff = diff.String
+		}
+		changes = append(changes, fc)
+	}
+	return changes, rows.Err()
 }
 
 // Close 关闭数据库连接
