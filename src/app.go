@@ -7,7 +7,6 @@ import (
 	"ChronoDraftAEx/internal/depsdetect"
 	"ChronoDraftAEx/internal/filewatcher"
 	"ChronoDraftAEx/internal/memorycore"
-	"ChronoDraftAEx/internal/mcp"
 	"ChronoDraftAEx/pkg/models"
 	"ChronoDraftAEx/pkg/utils"
 	"context"
@@ -23,7 +22,6 @@ import (
 type ChronoService struct {
 	ctx           context.Context
 	core          *memorycore.MemoryCore
-	mcpServer     *mcp.MCPServer
 	projectRoot   string
 	lastSnap      map[string]changedetect.FileSnapshot
 	configManager *config.Manager
@@ -90,14 +88,14 @@ func (s *ChronoService) initCore() error {
 	}
 	s.core = core
 
-	if s.mcpServer != nil {
-		_ = s.mcpServer.Stop(s.ctx)
+	loaded, err := changedetect.LoadLastSnap(s.projectRoot)
+	if err != nil || loaded == nil {
+		detector := changedetect.NewDetector(s.projectRoot)
+		s.lastSnap, _ = detector.ScanSnapshot()
+		_ = changedetect.SaveLastSnap(s.projectRoot, s.lastSnap)
+	} else {
+		s.lastSnap = loaded
 	}
-	s.mcpServer = mcp.NewMCPServer(core, ":8787")
-	_ = s.mcpServer.Start()
-
-	detector := changedetect.NewDetector(s.projectRoot)
-	s.lastSnap, _ = detector.ScanSnapshot()
 
 	// 初始化文件监听器（不自动启动）
 	s.watcher = filewatcher.NewWatcher(s.projectRoot, func() {
@@ -110,9 +108,6 @@ func (s *ChronoService) initCore() error {
 func (s *ChronoService) ServiceShutdown(ctx context.Context) error {
 	if s.watcher != nil {
 		s.watcher.Stop()
-	}
-	if s.mcpServer != nil {
-		_ = s.mcpServer.Stop(ctx)
 	}
 	if s.core != nil {
 		_ = s.core.Close()
@@ -134,6 +129,7 @@ func (s *ChronoService) CaptureChanges(sessionID string) (*models.StructuredEntr
 		return nil, err
 	}
 	s.lastSnap = newSnap
+	_ = changedetect.SaveLastSnap(s.projectRoot, s.lastSnap)
 	return entry, nil
 }
 
