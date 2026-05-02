@@ -3,6 +3,7 @@
 package memorycore
 
 import (
+	"ChronoDraftAEx/internal/agentswriter"
 	"ChronoDraftAEx/internal/changeorganize"
 	"ChronoDraftAEx/internal/changedetect"
 	"ChronoDraftAEx/internal/kbindex"
@@ -15,10 +16,11 @@ import (
 
 // MemoryCore 记忆内核
 type MemoryCore struct {
-	detector  *changedetect.Detector
-	organizer *changeorganize.Organizer
-	kbIndex   *kbindex.KBIndex
-	ctx       context.Context
+	detector     *changedetect.Detector
+	organizer    *changeorganize.Organizer
+	kbIndex      *kbindex.KBIndex
+	agentsWriter *agentswriter.Writer
+	ctx          context.Context
 }
 
 // NewMemoryCore 创建记忆内核实例
@@ -38,12 +40,14 @@ func NewMemoryCore(projectRoot, aiAPIKey, aiBaseURL, aiModel string) (*MemoryCor
 		return nil, fmt.Errorf("初始化知识库失败: %w", err)
 	}
 
-	return &MemoryCore{
-		detector:  detector,
-		organizer: organizer,
-		kbIndex:   kbi,
-		ctx:       ctx,
-	}, nil
+	m := &MemoryCore{
+		detector:     detector,
+		organizer:    organizer,
+		kbIndex:      kbi,
+		agentsWriter: agentswriter.NewWriter(projectRoot),
+		ctx:          ctx,
+	}
+	return m, nil
 }
 
 // CaptureAndIndex 捕获变动、生成摘要并索引到知识库（完整工作流）
@@ -63,6 +67,11 @@ func (m *MemoryCore) CaptureAndIndex(oldSnap, newSnap map[string]changedetect.Fi
 	// 3. 索引到知识库
 	if err := m.kbIndex.IndexEntry(m.ctx, entry); err != nil {
 		return nil, fmt.Errorf("索引知识库失败: %w", err)
+	}
+
+	// 自动写入 AGENTS.md
+	if results, err := m.kbIndex.Search(m.ctx, "最新变更", 10); err == nil {
+		_ = m.agentsWriter.Write(results)
 	}
 
 	return entry, nil
@@ -101,6 +110,15 @@ func (m *MemoryCore) CreateSnapshot(version string, dependencies []string) (*mod
 // ListSnapshots 列出所有快照
 func (m *MemoryCore) ListSnapshots() ([]models.ProjectSnapshot, error) {
 	return m.kbIndex.ListSnapshots()
+}
+
+// GenerateAgentsMD 手动触发 AGENTS.md 生成
+func (m *MemoryCore) GenerateAgentsMD() error {
+	results, err := m.kbIndex.Search(m.ctx, "最新变更", 10)
+	if err != nil {
+		return err
+	}
+	return m.agentsWriter.Write(results)
 }
 
 // Close 关闭记忆内核，释放资源

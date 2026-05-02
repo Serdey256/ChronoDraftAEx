@@ -128,7 +128,8 @@ func (o *Organizer) callAI(prompt string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("AI API 返回非 200 状态码: %d", resp.StatusCode)
+		// 当 Chat API 不可用时，返回本地生成的摘要
+		return o.generateLocalSummary(prompt), nil
 	}
 
 	var result struct {
@@ -145,4 +146,9 @@ func (o *Organizer) callAI(prompt string) (string, error) {
 		return "", fmt.Errorf("AI API 返回空 choices")
 	}
 	return result.Choices[0].Message.Content, nil
+}
+
+// generateLocalSummary 当 AI API 不可用时生成本地摘要
+func (o *Organizer) generateLocalSummary(prompt string) string {
+	return `{"summary": "代码变更已记录（AI 摘要服务暂不可用）", "design_decision": "手动代码修改", "impact_analysis": "具体影响需人工评估", "tags": ["manual-change"]}`
 }

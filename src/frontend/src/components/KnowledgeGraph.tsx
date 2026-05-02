@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { GetGraphData } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { useToast } from '../contexts/ToastContext'
 
 interface SimNode extends d3.SimulationNodeDatum {
   id: string
@@ -21,26 +22,10 @@ const colorMap: Record<string, string> = {
   tag: '#f778ba',
 }
 
-const mockNodes: SimNode[] = [
-  { id: 'auth', label: 'auth 模块', type: 'module' },
-  { id: 'security', label: 'security 模块', type: 'module' },
-  { id: 'database', label: 'database 模块', type: 'module' },
-  { id: 'oauth', label: 'OAuth2 决策', type: 'decision' },
-  { id: 'pkce', label: 'PKCE 流程', type: 'concept' },
-  { id: 'token', label: 'Token 管理', type: 'concept' },
-]
-
-const mockLinks: SimLink[] = [
-  { source: 'oauth', target: 'auth', relation: 'affects' },
-  { source: 'oauth', target: 'security', relation: 'relates_to' },
-  { source: 'pkce', target: 'oauth', relation: 'implements' },
-  { source: 'token', target: 'auth', relation: 'belongs_to' },
-  { source: 'database', target: 'auth', relation: 'depends_on' },
-]
-
 function KnowledgeGraph() {
   const svgRef = useRef<SVGSVGElement>(null)
   const [loading, setLoading] = useState(false)
+  const toast = useToast()
 
   useEffect(() => {
     if (!svgRef.current) return
@@ -57,14 +42,13 @@ function KnowledgeGraph() {
           links = result.edges.map((e: any) => ({ source: e.source_id, target: e.target_id, relation: e.relation }))
         }
       } catch (e) {
-        console.warn('获取图谱数据失败', e)
+        toast.warning('获取图谱数据失败')
       } finally {
         setLoading(false)
       }
 
       if (nodes.length === 0) {
-        nodes = mockNodes
-        links = mockLinks
+        return
       }
 
       renderGraph(nodes, links)

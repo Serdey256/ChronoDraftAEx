@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { ListSnapshots, CreateSnapshot } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { useToast } from '../contexts/ToastContext'
 import type { ProjectSnapshot } from '../types'
 
 function SnapshotView() {
+  const toast = useToast()
   const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([])
   const [selected, setSelected] = useState<ProjectSnapshot | null>(null)
   const [compareTarget, setCompareTarget] = useState<ProjectSnapshot | null>(null)
@@ -28,7 +30,7 @@ function SnapshotView() {
         return
       }
     } catch (e) {
-      console.warn('获取快照失败', e)
+      toast.warning('获取快照失败')
     }
     setSnapshots([])
     setLoading(false)
@@ -51,7 +53,7 @@ function SnapshotView() {
         }, ...prev])
       }
     } catch (e) {
-      console.error('创建快照失败', e)
+      toast.error('创建快照失败')
     } finally {
       setLoading(false)
     }

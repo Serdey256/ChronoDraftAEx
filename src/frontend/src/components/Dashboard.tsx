@@ -1,11 +1,22 @@
-import { useState, useEffect } from 'react'
-import { SearchKnowledge, CaptureChanges } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { useState, useEffect, useRef } from 'react'
+import { SearchKnowledge, CaptureChanges, GetCurrentProject, StartWatcher, StopWatcher, IsWatcherRunning } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { useToast } from '../contexts/ToastContext'
 import type { StructuredEntry } from '../types'
 
+interface ProjectInfo {
+  id: string
+  name: string
+  path: string
+}
+
 function Dashboard() {
+  const toast = useToast()
   const [entries, setEntries] = useState<StructuredEntry[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
+  const [currentProject, setCurrentProject] = useState<ProjectInfo | null>(null)
+  const [watcherRunning, setWatcherRunning] = useState(false)
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const search = async (q: string) => {
     setLoading(true)
@@ -13,7 +24,7 @@ function Dashboard() {
       const results = await SearchKnowledge(q, 10)
       setEntries(results.map((r: any) => r.entry))
     } catch (e) {
-      console.error('搜索失败:', e)
+      toast.error('搜索失败: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setLoading(false)
     }
@@ -36,7 +47,7 @@ function Dashboard() {
         }, ...prev])
       }
     } catch (e) {
-      console.error('捕获变更失败:', e)
+      toast.error('捕获变更失败: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setLoading(false)
     }
@@ -44,13 +55,83 @@ function Dashboard() {
 
   useEffect(() => {
     search('')
+    loadCurrentProject()
   }, [])
+
+  useEffect(() => {
+    const pollStatus = () => {
+      IsWatcherRunning().then(setWatcherRunning).catch(() => setWatcherRunning(false))
+    }
+    pollStatus()
+    const statusInterval = setInterval(pollStatus, 5000)
+    return () => clearInterval(statusInterval)
+  }, [])
+
+  useEffect(() => {
+    if (watcherRunning) {
+      autoRefreshRef.current = setInterval(() => {
+        search('')
+      }, 5000)
+    } else if (autoRefreshRef.current) {
+      clearInterval(autoRefreshRef.current)
+      autoRefreshRef.current = null
+    }
+    return () => {
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current)
+        autoRefreshRef.current = null
+      }
+    }
+  }, [watcherRunning])
+
+  const toggleWatcher = async () => {
+    try {
+      if (watcherRunning) {
+        await StopWatcher()
+      } else {
+        await StartWatcher()
+      }
+      const running = await IsWatcherRunning()
+      setWatcherRunning(running)
+    } catch (e) {
+      toast.error('切换监控状态失败: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+
+  const loadCurrentProject = async () => {
+    try {
+      const project = await GetCurrentProject()
+      if (project) {
+        setCurrentProject({
+          id: project.id,
+          name: project.name,
+          path: project.path,
+        })
+      }
+    } catch (e) {
+      toast.error('加载当前项目失败: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
 
   return (
     <div>
       <div className="page-header">
         <h2>📊 仪表盘</h2>
         <p>查看项目知识库的近期变更与全局概览</p>
+        {currentProject && (
+          <div style={{ 
+            marginTop: 8, 
+            padding: '8px 12px', 
+            background: 'rgba(88, 166, 255, 0.1)', 
+            borderRadius: 6,
+            border: '1px solid var(--accent)',
+            display: 'inline-block'
+          }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>当前监控: </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>{currentProject.name}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8 }}>{currentProject.path}</span>
+          </div>
+        )}
       </div>
 
       <div className="grid" style={{ marginBottom: 24 }}>
@@ -88,6 +169,13 @@ function Dashboard() {
           </button>
           <button className="btn btn-secondary" onClick={capture} disabled={loading}>
             {loading ? '捕获中...' : '📥 捕获变更'}
+          </button>
+          <button
+            className={`btn ${watcherRunning ? 'btn-danger' : 'btn-secondary'} watcher-btn`}
+            onClick={toggleWatcher}
+          >
+            <span className={`watcher-dot ${watcherRunning ? 'watcher-active' : 'watcher-stopped'}`} />
+            {watcherRunning ? '停止监控' : '启动监控'}
           </button>
         </div>
 
