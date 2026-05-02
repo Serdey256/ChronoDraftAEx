@@ -17,3 +17,6 @@ Thumbs.db
 
 # Agent
 .sisyphus/
+
+# log
+log/
