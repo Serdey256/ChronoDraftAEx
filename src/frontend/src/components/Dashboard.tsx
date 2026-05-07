@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { SearchKnowledge, CaptureChanges, GetCurrentProject, StartWatcher, StopWatcher, IsWatcherRunning } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { SearchKnowledge, CaptureChanges, GetCurrentProject, StartWatcher, StopWatcher, IsWatcherRunning, FullIndex, IsKnowledgeBaseEmpty } from '../../bindings/ChronoDraftAEx/chronoservice.js'
 import { useToast } from '../contexts/ToastContext'
 import type { StructuredEntry } from '../types'
 
@@ -16,6 +16,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(false)
   const [currentProject, setCurrentProject] = useState<ProjectInfo | null>(null)
   const [watcherRunning, setWatcherRunning] = useState(false)
+  const [kbEmpty, setKbEmpty] = useState(false)
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const search = async (q: string) => {
@@ -38,7 +39,7 @@ function Dashboard() {
         setEntries(prev => [{
           id: entry.id,
           session_id: entry.session_id,
-          timestamp: entry.timestamp ? entry.timestamp.toISOString() : new Date().toISOString(),
+          timestamp: entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString(),
           summary: entry.summary,
           design_decision: entry.design_decision,
           impact_analysis: entry.impact_analysis,
@@ -56,7 +57,31 @@ function Dashboard() {
   useEffect(() => {
     search('')
     loadCurrentProject()
+    checkEmpty()
   }, [])
+
+  const checkEmpty = async () => {
+    try {
+      const empty = await IsKnowledgeBaseEmpty()
+      setKbEmpty(empty)
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  const fullIndex = async () => {
+    setLoading(true)
+    try {
+      await FullIndex()
+      toast.success('全量索引完成')
+      setKbEmpty(false)
+      search('')
+    } catch (e: any) {
+      toast.error('全量索引失败: ' + (e.message || String(e)))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     const pollStatus = () => {
@@ -153,6 +178,24 @@ function Dashboard() {
           </div>
         </div>
       </div>
+
+      {kbEmpty && (
+        <div style={{
+          background: 'rgba(210, 153, 34, 0.1)',
+          border: '1px solid #d29922',
+          borderRadius: 8,
+          padding: 16,
+          marginBottom: 16,
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: 14, color: '#d29922', marginBottom: 8 }}>
+            知识库为空，点击下方按钮建立初始索引
+          </div>
+          <button className="btn btn-primary" onClick={fullIndex} disabled={loading}>
+            {loading ? '索引中，请稍候...' : '📦 全量索引'}
+          </button>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>

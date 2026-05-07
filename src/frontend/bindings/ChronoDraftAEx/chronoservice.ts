@@ -45,6 +45,31 @@ export function CreateSnapshot(version: string, dependencies: string[]): $Cancel
 }
 
 /**
+ * DetectDependencies 前端调用：检测项目依赖
+ */
+export function DetectDependencies(): $CancellablePromise<string[]> {
+    return $Call.ByID(4264258456).then(($result: any) => {
+        return $$createType6($result);
+    });
+}
+
+/**
+ * FullIndex 前端调用：全量索引项目现有代码
+ */
+export function FullIndex(): $CancellablePromise<models$0.StructuredEntry | null> {
+    return $Call.ByID(1284341273).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * GenerateAgentsMD 前端调用：手动生成 AGENTS.md
+ */
+export function GenerateAgentsMD(): $CancellablePromise<void> {
+    return $Call.ByID(3215153182);
+}
+
+/**
  * GetCurrentProject 返回当前活跃项目信息
  */
 export function GetCurrentProject(): $CancellablePromise<config$0.ProjectConfig | null> {
@@ -58,7 +83,7 @@ export function GetCurrentProject(): $CancellablePromise<config$0.ProjectConfig 
  */
 export function GetGraphData(limit: number): $CancellablePromise<models$0.GraphData | null> {
     return $Call.ByID(343775598, limit).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -70,11 +95,25 @@ export function GetProjectRoot(): $CancellablePromise<string> {
 }
 
 /**
+ * IsKnowledgeBaseEmpty 前端调用：检查知识库是否为空
+ */
+export function IsKnowledgeBaseEmpty(): $CancellablePromise<boolean> {
+    return $Call.ByID(1762013908);
+}
+
+/**
+ * IsWatcherRunning 前端调用：查询监控状态
+ */
+export function IsWatcherRunning(): $CancellablePromise<boolean> {
+    return $Call.ByID(2519807341);
+}
+
+/**
  * ListEntries 前端调用：分页列出知识条目
  */
 export function ListEntries(offset: number, limit: number): $CancellablePromise<models$0.StructuredEntry[]> {
     return $Call.ByID(932823910, offset, limit).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType9($result);
     });
 }
 
@@ -83,7 +122,7 @@ export function ListEntries(offset: number, limit: number): $CancellablePromise<
  */
 export function ListProjects(): $CancellablePromise<config$0.ProjectConfig[]> {
     return $Call.ByID(561904460).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType10($result);
     });
 }
 
@@ -92,7 +131,7 @@ export function ListProjects(): $CancellablePromise<config$0.ProjectConfig[]> {
  */
 export function ListSnapshots(): $CancellablePromise<models$0.ProjectSnapshot[]> {
     return $Call.ByID(2973698827).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType11($result);
     });
 }
 
@@ -108,15 +147,8 @@ export function RemoveProject(projectID: string): $CancellablePromise<void> {
  */
 export function SearchKnowledge(query: string, topK: number): $CancellablePromise<models$0.SearchResult[]> {
     return $Call.ByID(2139240054, query, topK).then(($result: any) => {
-        return $$createType12($result);
+        return $$createType13($result);
     });
-}
-
-/**
- * SwitchProject 切换到指定项目
- */
-export function SwitchProject(projectID: string): $CancellablePromise<void> {
-    return $Call.ByID(2810824499, projectID);
 }
 
 /**
@@ -134,10 +166,10 @@ export function StopWatcher(): $CancellablePromise<void> {
 }
 
 /**
- * IsWatcherRunning 前端调用：查询监控状态
+ * SwitchProject 切换到指定项目
  */
-export function IsWatcherRunning(): $CancellablePromise<boolean> {
-    return $Call.ByID(2519807341);
+export function SwitchProject(projectID: string): $CancellablePromise<void> {
+    return $Call.ByID(2810824499, projectID);
 }
 
 // Private type creation functions
@@ -147,10 +179,11 @@ const $$createType2 = models$0.StructuredEntry.createFrom;
 const $$createType3 = $Create.Nullable($$createType2);
 const $$createType4 = models$0.ProjectSnapshot.createFrom;
 const $$createType5 = $Create.Nullable($$createType4);
-const $$createType6 = models$0.GraphData.createFrom;
-const $$createType7 = $Create.Nullable($$createType6);
-const $$createType8 = $Create.Array($$createType2);
-const $$createType9 = $Create.Array($$createType0);
-const $$createType10 = $Create.Array($$createType4);
-const $$createType11 = models$0.SearchResult.createFrom;
-const $$createType12 = $Create.Array($$createType11);
+const $$createType6 = $Create.Array($Create.Any);
+const $$createType7 = models$0.GraphData.createFrom;
+const $$createType8 = $Create.Nullable($$createType7);
+const $$createType9 = $Create.Array($$createType2);
+const $$createType10 = $Create.Array($$createType0);
+const $$createType11 = $Create.Array($$createType4);
+const $$createType12 = models$0.SearchResult.createFrom;
+const $$createType13 = $Create.Array($$createType12);

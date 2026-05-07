@@ -124,6 +124,22 @@ func TestToolRegistration(t *testing.T) {
 	}
 }
 
+func TestFullIndex(t *testing.T) {
+	core := createTestCore(t)
+	srv := NewStdioServer(core, t.TempDir())
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{}
+
+	result, err := srv.handleFullIndex(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+}
+
 func getContentText(result *mcpgo.CallToolResult) string {
 	for _, c := range result.Content {
 		if tc, ok := c.(mcpgo.TextContent); ok {

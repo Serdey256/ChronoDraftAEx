@@ -206,6 +206,23 @@ func (s *ChronoService) ListEntries(offset, limit int) ([]models.StructuredEntry
 	return s.core.ListEntries(offset, limit)
 }
 
+// FullIndex 前端调用：全量索引项目现有代码
+func (s *ChronoService) FullIndex() (*models.StructuredEntry, error) {
+	if s.core == nil {
+		return nil, fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.FullIndex()
+}
+
+// IsKnowledgeBaseEmpty 前端调用：检查知识库是否为空
+func (s *ChronoService) IsKnowledgeBaseEmpty() bool {
+	if s.core == nil {
+		return true
+	}
+	entries, err := s.core.ListEntries(0, 1)
+	return err != nil || len(entries) == 0
+}
+
 // GetProjectRoot 返回当前项目根目录
 func (s *ChronoService) GetProjectRoot() string {
 	return s.projectRoot

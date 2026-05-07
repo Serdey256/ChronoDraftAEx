@@ -8,7 +8,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -102,6 +105,10 @@ Session ID: %s
 
 // callAI 调用云端 AI API（支持 OpenAI 兼容格式）
 func (o *Organizer) callAI(prompt string) (string, error) {
+	if o.apiKey == "" {
+		return o.generateLocalSummary(prompt), nil
+	}
+
 	// 构造请求体
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"model": o.model,
@@ -112,7 +119,7 @@ func (o *Organizer) callAI(prompt string) (string, error) {
 		"temperature": 0.3,
 	})
 
-	url := o.apiBaseURL + "/chat/completions"
+	url := strings.TrimRight(o.apiBaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return "", err
@@ -128,7 +135,8 @@ func (o *Organizer) callAI(prompt string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// 当 Chat API 不可用时，返回本地生成的摘要
+		errBody, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "[changeorganize] AI API 错误 (status %d): %s\n", resp.StatusCode, string(errBody))
 		return o.generateLocalSummary(prompt), nil
 	}
 

@@ -86,6 +86,14 @@ func (s *StdioServer) registerTools(srv *mcpserver.MCPServer) {
 		),
 		s.handleCaptureChanges,
 	)
+
+	// 6. full_index
+	srv.AddTool(
+		mcpgo.NewTool("full_index",
+			mcpgo.WithDescription("全量索引项目现有代码（首次接入时使用）"),
+		),
+		s.handleFullIndex,
+	)
 }
 
 // Start 启动 MCP stdio 服务器（阻塞）
@@ -184,6 +192,15 @@ func (s *StdioServer) handleCaptureChanges(ctx context.Context, req mcpgo.CallTo
 	s.lastSnap = newSnap
 	_ = changedetect.SaveLastSnap(s.projectRoot, s.lastSnap)
 
+	data, _ := json.Marshal(entry)
+	return mcpgo.NewToolResultText(string(data)), nil
+}
+
+func (s *StdioServer) handleFullIndex(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	entry, err := s.core.FullIndex()
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("全量索引失败: %v", err)), nil
+	}
 	data, _ := json.Marshal(entry)
 	return mcpgo.NewToolResultText(string(data)), nil
 }

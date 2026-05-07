@@ -77,6 +77,48 @@ func (m *MemoryCore) CaptureAndIndex(oldSnap, newSnap map[string]changedetect.Fi
 	return entry, nil
 }
 
+// FullIndex 全量索引：将项目现有代码当作一次初始变更处理
+func (m *MemoryCore) FullIndex() (*models.StructuredEntry, error) {
+	snapshot, err := m.detector.ScanSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("扫描项目文件失败: %w", err)
+	}
+
+	var changes []models.FileChange
+	for path := range snapshot {
+		changes = append(changes, models.FileChange{
+			Path:       path,
+			ChangeType: "add",
+		})
+	}
+
+	if len(changes) == 0 {
+		return nil, fmt.Errorf("项目中未发现任何文件")
+	}
+
+	record := &models.ChangeRecord{
+		ID:        utils.GenerateID(),
+		Timestamp: time.Now(),
+		SessionID: "full-index",
+		Changes:   changes,
+	}
+
+	entry, err := m.organizer.Organize(record)
+	if err != nil {
+		return nil, fmt.Errorf("生成结构化摘要失败: %w", err)
+	}
+
+	if err := m.kbIndex.IndexEntry(m.ctx, entry); err != nil {
+		return nil, fmt.Errorf("索引知识库失败: %w", err)
+	}
+
+	if results, err := m.kbIndex.Search(m.ctx, "最新变更", 10); err == nil {
+		_ = m.agentsWriter.Write(results)
+	}
+
+	return entry, nil
+}
+
 // SearchKnowledge 搜索知识库
 func (m *MemoryCore) SearchKnowledge(query string, topK int) ([]models.SearchResult, error) {
 	return m.kbIndex.Search(m.ctx, query, topK)

@@ -11,9 +11,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -206,7 +208,7 @@ func (v *VectorDB) generateEmbedding(ctx context.Context, text string) ([]float3
 		"input": text,
 	})
 
-	url := v.apiBase + "/embeddings"
+	url := strings.TrimRight(v.apiBase, "/") + "/embeddings"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, err
@@ -222,7 +224,8 @@ func (v *VectorDB) generateEmbedding(ctx context.Context, text string) ([]float3
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("embedding API 返回状态码: %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("embedding API 返回状态码 %d: %s", resp.StatusCode, string(errBody))
 	}
 
 	var result struct {

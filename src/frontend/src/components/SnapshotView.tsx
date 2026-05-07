@@ -21,7 +21,7 @@ function SnapshotView() {
       if (snaps && snaps.length > 0) {
         setSnapshots(snaps.map((s: any) => ({
           id: s.id,
-          timestamp: s.timestamp ? s.timestamp.toISOString() : new Date().toISOString(),
+          timestamp: s.timestamp ? new Date(s.timestamp).toISOString() : new Date().toISOString(),
           version: s.version,
           dependencies: s.dependencies || [],
           metadata: s.metadata || {},
@@ -41,12 +41,12 @@ function SnapshotView() {
     try {
       const newSnap = await CreateSnapshot(
         'v' + new Date().toISOString().slice(0, 10),
-        ['react@18.3.1', 'wails@v3.0.0-alpha']
+        []
       )
       if (newSnap) {
         setSnapshots(prev => [{
           id: newSnap.id,
-          timestamp: newSnap.timestamp ? newSnap.timestamp.toISOString() : new Date().toISOString(),
+          timestamp: newSnap.timestamp ? new Date(newSnap.timestamp).toISOString() : new Date().toISOString(),
           version: newSnap.version,
           dependencies: newSnap.dependencies || [],
           metadata: newSnap.metadata as Record<string, string> || {},
