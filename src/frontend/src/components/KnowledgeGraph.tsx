@@ -65,17 +65,21 @@ function KnowledgeGraph() {
     if (!svgRef.current) return
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
+    svg.style('cursor', 'grab')
 
     const width = svgRef.current.clientWidth
     const height = svgRef.current.clientHeight
 
+    // Container group for zoom/pan transforms
+    const g = svg.append('g')
+
     const simulation = d3.forceSimulation(nodes)
       .force('link', d3.forceLink<SimNode, SimLink>(links).id(d => d.id).distance(120))
       .force('charge', d3.forceManyBody().strength(-400))
-      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('center', d3.forceCenter(0, 0))
       .force('collide', d3.forceCollide().radius(40))
 
-    const link = svg.append('g')
+    const link = g.append('g')
       .attr('stroke', '#30363d')
       .attr('stroke-opacity', 0.8)
       .selectAll('line')
@@ -83,7 +87,7 @@ function KnowledgeGraph() {
       .join('line')
       .attr('stroke-width', 2)
 
-    const linkLabel = svg.append('g')
+    const linkLabel = g.append('g')
       .selectAll('text')
       .data(links)
       .join('text')
@@ -92,7 +96,7 @@ function KnowledgeGraph() {
       .attr('fill', '#8b949e')
       .attr('text-anchor', 'middle')
 
-    const node = svg.append('g')
+    const node = g.append('g')
       .selectAll('g')
       .data(nodes)
       .join('g')
@@ -145,6 +149,19 @@ function KnowledgeGraph() {
 
       node.attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`)
     })
+
+    // Zoom behavior — panning and mouse wheel zoom
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform)
+      })
+      .on('start', () => svg.style('cursor', 'grabbing'))
+      .on('end', () => svg.style('cursor', 'grab'))
+
+    svg.call(zoom)
+    // Center the graph initially
+    svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2))
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { SearchKnowledge, GetCurrentProject, IndexProject, IsKnowledgeBaseEmpty } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { SearchKnowledge, GetCurrentProject, IndexProject, IsKnowledgeBaseEmpty, GenerateAgentsMD } from '../../bindings/ChronoDraftAEx/chronoservice.js'
 import { useToast } from '../contexts/ToastContext'
 import type { StructuredEntry } from '../types'
 
@@ -41,6 +41,21 @@ function Dashboard() {
       setKbEmpty(empty)
     } catch (e) {
       // ignore
+    }
+  }
+
+  const refresh = async () => {
+    setLoading(true)
+    try {
+      const [results] = await Promise.all([SearchKnowledge('', 10), GenerateAgentsMD()])
+      setEntries(results.map((r: any) => r.entry))
+      const empty = await IsKnowledgeBaseEmpty()
+      setKbEmpty(empty)
+      toast.success('刷新完成')
+    } catch (e: any) {
+      toast.error('刷新失败: ' + (e.message || String(e)))
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -138,6 +153,9 @@ function Dashboard() {
           />
           <button className="btn btn-primary" onClick={() => search(query)} disabled={loading}>
             {loading ? '搜索中...' : '搜索'}
+          </button>
+          <button className="btn btn-secondary" onClick={refresh} disabled={loading}>
+            {loading ? '刷新中...' : '🔄 刷新'}
           </button>
         </div>
 
