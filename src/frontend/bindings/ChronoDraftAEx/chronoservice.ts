@@ -54,15 +54,6 @@ export function DetectDependencies(): $CancellablePromise<string[]> {
 }
 
 /**
- * FullIndex 前端调用：全量索引项目现有代码
- */
-export function FullIndex(): $CancellablePromise<models$0.StructuredEntry | null> {
-    return $Call.ByID(1284341273).then(($result: any) => {
-        return $$createType3($result);
-    });
-}
-
-/**
  * GenerateAgentsMD 前端调用：手动生成 AGENTS.md
  */
 export function GenerateAgentsMD(): $CancellablePromise<void> {
@@ -92,6 +83,15 @@ export function GetGraphData(limit: number): $CancellablePromise<models$0.GraphD
  */
 export function GetProjectRoot(): $CancellablePromise<string> {
     return $Call.ByID(2640924059);
+}
+
+/**
+ * IndexProject 前端调用：全量索引项目现有代码
+ */
+export function IndexProject(): $CancellablePromise<models$0.StructuredEntry | null> {
+    return $Call.ByID(1981833759).then(($result: any) => {
+        return $$createType3($result);
+    });
 }
 
 /**

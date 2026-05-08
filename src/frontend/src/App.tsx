@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react'
 import { Routes, Route, NavLink } from 'react-router-dom'
 import { ToastProvider } from './contexts/ToastContext'
 import Toast from './components/Toast'
@@ -6,34 +5,8 @@ import Dashboard from './components/Dashboard'
 import KnowledgeGraph from './components/KnowledgeGraph'
 import SnapshotView from './components/SnapshotView'
 import ProjectManager from './components/ProjectManager'
-import { StartWatcher, StopWatcher, IsWatcherRunning } from '../bindings/ChronoDraftAEx/chronoservice.js'
 
 function App() {
-  const [watcherRunning, setWatcherRunning] = useState(false)
-
-  useEffect(() => {
-    const poll = () => {
-      IsWatcherRunning().then(setWatcherRunning).catch(() => setWatcherRunning(false))
-    }
-    poll()
-    const interval = setInterval(poll, 5000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const toggleWatcher = async () => {
-    try {
-      if (watcherRunning) {
-        await StopWatcher()
-      } else {
-        await StartWatcher()
-      }
-      const running = await IsWatcherRunning()
-      setWatcherRunning(running)
-    } catch (e) {
-      console.error('切换监控状态失败:', e)
-    }
-  }
-
   return (
     <ToastProvider>
       <div className="app-container">
@@ -58,15 +31,9 @@ function App() {
           </nav>
           <div className="sidebar-footer">
             <div className="status-indicator">
-              <span className={`dot ${watcherRunning ? 'watcher-active' : 'watcher-stopped'}`} />
-              {watcherRunning ? '文件监控中' : '监控已停止'}
+              <span className="dot online" />
+              Agent 驱动模式
             </div>
-            <button
-              className="btn btn-secondary watcher-toggle"
-              onClick={toggleWatcher}
-            >
-              {watcherRunning ? '停止监控' : '启动监控'}
-            </button>
           </div>
         </aside>
         <main className="main-content">

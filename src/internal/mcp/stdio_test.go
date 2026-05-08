@@ -124,19 +124,58 @@ func TestToolRegistration(t *testing.T) {
 	}
 }
 
-func TestFullIndex(t *testing.T) {
+func TestIndexProject(t *testing.T) {
 	core := createTestCore(t)
 	srv := NewStdioServer(core, t.TempDir())
 
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]interface{}{}
 
-	result, err := srv.handleFullIndex(context.Background(), req)
+	result, err := srv.handleIndexProject(context.Background(), req)
 	if err != nil {
 		t.Fatalf("handler returned error: %v", err)
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+	}
+}
+
+func TestRecordChange(t *testing.T) {
+	core := createTestCore(t)
+	srv := NewStdioServer(core, t.TempDir())
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{
+		"what":    "添加了用户登录功能",
+		"why":     "需要身份认证",
+		"problem": "解决未授权访问问题",
+		"files":   "src/login.ts,src/auth.ts",
+		"tags":    "认证,安全",
+	}
+
+	result, err := srv.handleRecordChange(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+}
+
+func TestRecordChangeMissingParams(t *testing.T) {
+	core := createTestCore(t)
+	srv := NewStdioServer(core, t.TempDir())
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{}
+
+	result, err := srv.handleRecordChange(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	text := getContentText(result)
+	if !strings.Contains(text, "必填") && !strings.Contains(strings.ToLower(text), "required") {
+		t.Errorf("expected validation error, got: %s", text)
 	}
 }
 

@@ -77,8 +77,8 @@ func (m *MemoryCore) CaptureAndIndex(oldSnap, newSnap map[string]changedetect.Fi
 	return entry, nil
 }
 
-// FullIndex 全量索引：将项目现有代码当作一次初始变更处理
-func (m *MemoryCore) FullIndex() (*models.StructuredEntry, error) {
+// IndexProject 全量索引：将项目现有代码当作一次初始变更处理
+func (m *MemoryCore) IndexProject() (*models.StructuredEntry, error) {
 	snapshot, err := m.detector.ScanSnapshot()
 	if err != nil {
 		return nil, fmt.Errorf("扫描项目文件失败: %w", err)
@@ -156,6 +156,20 @@ func (m *MemoryCore) ListSnapshots() ([]models.ProjectSnapshot, error) {
 
 // GenerateAgentsMD 手动触发 AGENTS.md 生成
 func (m *MemoryCore) GenerateAgentsMD() error {
+	results, err := m.kbIndex.Search(m.ctx, "最新变更", 10)
+	if err != nil {
+		return err
+	}
+	return m.agentsWriter.Write(results)
+}
+
+// IndexEntry 直接将结构化条目索引到知识库（不经过 AI 处理）
+func (m *MemoryCore) IndexEntry(entry *models.StructuredEntry) error {
+	return m.kbIndex.IndexEntry(m.ctx, entry)
+}
+
+// RefreshAgentsMD 刷新 AGENTS.md 文件
+func (m *MemoryCore) RefreshAgentsMD() error {
 	results, err := m.kbIndex.Search(m.ctx, "最新变更", 10)
 	if err != nil {
 		return err

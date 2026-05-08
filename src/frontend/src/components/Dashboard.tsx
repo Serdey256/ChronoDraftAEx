@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { SearchKnowledge, CaptureChanges, GetCurrentProject, StartWatcher, StopWatcher, IsWatcherRunning, FullIndex, IsKnowledgeBaseEmpty } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { useState, useEffect } from 'react'
+import { SearchKnowledge, GetCurrentProject, IndexProject, IsKnowledgeBaseEmpty } from '../../bindings/ChronoDraftAEx/chronoservice.js'
 import { useToast } from '../contexts/ToastContext'
 import type { StructuredEntry } from '../types'
 
@@ -15,9 +15,7 @@ function Dashboard() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [currentProject, setCurrentProject] = useState<ProjectInfo | null>(null)
-  const [watcherRunning, setWatcherRunning] = useState(false)
   const [kbEmpty, setKbEmpty] = useState(false)
-  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const search = async (q: string) => {
     setLoading(true)
@@ -26,29 +24,6 @@ function Dashboard() {
       setEntries(results.map((r: any) => r.entry))
     } catch (e) {
       toast.error('搜索失败: ' + (e instanceof Error ? e.message : String(e)))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const capture = async () => {
-    setLoading(true)
-    try {
-      const entry = await CaptureChanges('manual-' + Date.now())
-      if (entry) {
-        setEntries(prev => [{
-          id: entry.id,
-          session_id: entry.session_id,
-          timestamp: entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString(),
-          summary: entry.summary,
-          design_decision: entry.design_decision,
-          impact_analysis: entry.impact_analysis,
-          affected_files: entry.affected_files || [],
-          tags: entry.tags || [],
-        }, ...prev])
-      }
-    } catch (e) {
-      toast.error('捕获变更失败: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setLoading(false)
     }
@@ -69,57 +44,17 @@ function Dashboard() {
     }
   }
 
-  const fullIndex = async () => {
+  const indexProject = async () => {
     setLoading(true)
     try {
-      await FullIndex()
-      toast.success('全量索引完成')
+      await IndexProject()
+      toast.success('项目结构扫描完成')
       setKbEmpty(false)
       search('')
     } catch (e: any) {
-      toast.error('全量索引失败: ' + (e.message || String(e)))
+      toast.error('扫描项目结构失败: ' + (e.message || String(e)))
     } finally {
       setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    const pollStatus = () => {
-      IsWatcherRunning().then(setWatcherRunning).catch(() => setWatcherRunning(false))
-    }
-    pollStatus()
-    const statusInterval = setInterval(pollStatus, 5000)
-    return () => clearInterval(statusInterval)
-  }, [])
-
-  useEffect(() => {
-    if (watcherRunning) {
-      autoRefreshRef.current = setInterval(() => {
-        search('')
-      }, 5000)
-    } else if (autoRefreshRef.current) {
-      clearInterval(autoRefreshRef.current)
-      autoRefreshRef.current = null
-    }
-    return () => {
-      if (autoRefreshRef.current) {
-        clearInterval(autoRefreshRef.current)
-        autoRefreshRef.current = null
-      }
-    }
-  }, [watcherRunning])
-
-  const toggleWatcher = async () => {
-    try {
-      if (watcherRunning) {
-        await StopWatcher()
-      } else {
-        await StartWatcher()
-      }
-      const running = await IsWatcherRunning()
-      setWatcherRunning(running)
-    } catch (e) {
-      toast.error('切换监控状态失败: ' + (e instanceof Error ? e.message : String(e)))
     }
   }
 
@@ -170,13 +105,6 @@ function Dashboard() {
             {entries.filter(e => new Date(e.timestamp).toDateString() === new Date().toDateString()).length}
           </div>
         </div>
-        <div className="card">
-          <div className="card-title">MCP 服务状态</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-            <span className="dot online" />
-            <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>运行中 :8787</span>
-          </div>
-        </div>
       </div>
 
       {kbEmpty && (
@@ -189,11 +117,12 @@ function Dashboard() {
           textAlign: 'center'
         }}>
           <div style={{ fontSize: 14, color: '#d29922', marginBottom: 8 }}>
-            知识库为空，点击下方按钮建立初始索引
+            知识库为空。Agent 完成代码修改后，变更会自动显示在这里。如需初始化项目结构，请点击下方按钮。
           </div>
-          <button className="btn btn-primary" onClick={fullIndex} disabled={loading}>
-            {loading ? '索引中，请稍候...' : '📦 全量索引'}
+          <button className="btn btn-primary" onClick={indexProject} disabled={loading}>
+            {loading ? '扫描中，请稍候...' : '扫描项目结构'}
           </button>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>Agent 可通过 record_change 工具上报代码变更</div>
         </div>
       )}
 
@@ -209,16 +138,6 @@ function Dashboard() {
           />
           <button className="btn btn-primary" onClick={() => search(query)} disabled={loading}>
             {loading ? '搜索中...' : '搜索'}
-          </button>
-          <button className="btn btn-secondary" onClick={capture} disabled={loading}>
-            {loading ? '捕获中...' : '📥 捕获变更'}
-          </button>
-          <button
-            className={`btn ${watcherRunning ? 'btn-danger' : 'btn-secondary'} watcher-btn`}
-            onClick={toggleWatcher}
-          >
-            <span className={`watcher-dot ${watcherRunning ? 'watcher-active' : 'watcher-stopped'}`} />
-            {watcherRunning ? '停止监控' : '启动监控'}
           </button>
         </div>
 
@@ -246,7 +165,7 @@ function Dashboard() {
           ))}
           {entries.length === 0 && !loading && (
             <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
-              暂无知识条目，点击「捕获变更」开始记录
+              Agent 完成代码修改后，变更会自动显示在这里
             </div>
           )}
         </div>

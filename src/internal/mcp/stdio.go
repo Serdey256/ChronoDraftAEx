@@ -3,11 +3,15 @@ package mcp
 import (
 	"ChronoDraftAEx/internal/changedetect"
 	"ChronoDraftAEx/internal/memorycore"
+	"ChronoDraftAEx/pkg/models"
+	"ChronoDraftAEx/pkg/utils"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -78,21 +82,33 @@ func (s *StdioServer) registerTools(srv *mcpserver.MCPServer) {
 		s.handleListEntries,
 	)
 
-	// 5. capture_changes
+	// 5. record_change (replaces capture_changes)
 	srv.AddTool(
-		mcpgo.NewTool("capture_changes",
-			mcpgo.WithDescription("捕获文件变动并生成结构化知识条目"),
-			mcpgo.WithString("session_id", mcpgo.Description("会话 ID，默认 mcp-auto")),
+		mcpgo.NewTool("record_change",
+			mcpgo.WithDescription("记录一次代码变更。Agent 完成代码修改后调用此工具，告知 ChronoDraftAEx 改动了什么、为什么改、解决了什么问题。"),
+			mcpgo.WithString("what", mcpgo.Required(), mcpgo.Description("改动了哪些文件，具体做了什么修改")),
+			mcpgo.WithString("why", mcpgo.Required(), mcpgo.Description("为什么要做出这些修改（设计决策与理由）")),
+			mcpgo.WithString("problem", mcpgo.Required(), mcpgo.Description("这些修改解决了什么问题")),
+			mcpgo.WithString("files", mcpgo.Description("涉及的文件路径列表，逗号分隔")),
+			mcpgo.WithString("tags", mcpgo.Description("相关标签，逗号分隔（如：认证,API,重构）")),
 		),
-		s.handleCaptureChanges,
+		s.handleRecordChange,
 	)
 
-	// 6. full_index
+	// 6. index_project
 	srv.AddTool(
-		mcpgo.NewTool("full_index",
-			mcpgo.WithDescription("全量索引项目现有代码（首次接入时使用）"),
+		mcpgo.NewTool("index_project",
+			mcpgo.WithDescription("扫描项目文件结构，为关键文件生成作用描述，构建知识图谱。首次接入项目时使用。"),
 		),
-		s.handleFullIndex,
+		s.handleIndexProject,
+	)
+
+	// 7. get_project_structure
+	srv.AddTool(
+		mcpgo.NewTool("get_project_structure",
+			mcpgo.WithDescription("获取当前项目的文件结构信息"),
+		),
+		s.handleGetProjectStructure,
 	)
 }
 
@@ -166,41 +182,74 @@ func (s *StdioServer) handleListEntries(ctx context.Context, req mcpgo.CallToolR
 	return mcpgo.NewToolResultText(string(data)), nil
 }
 
-func (s *StdioServer) handleCaptureChanges(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	sessionID := req.GetString("session_id", "mcp-auto")
+func (s *StdioServer) handleRecordChange(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	what := req.GetString("what", "")
+	why := req.GetString("why", "")
+	problem := req.GetString("problem", "")
+	files := req.GetString("files", "")
+	tags := req.GetString("tags", "")
 
-	if s.lastSnap == nil {
-		loaded, err := changedetect.LoadLastSnap(s.projectRoot)
-		if err == nil && loaded != nil {
-			s.lastSnap = loaded
-		} else {
-			detector := changedetect.NewDetector(s.projectRoot)
-			s.lastSnap, _ = detector.ScanSnapshot()
+	if what == "" || why == "" || problem == "" {
+		return mcpgo.NewToolResultError("what, why, problem 参数均为必填"), nil
+	}
+
+	var affectedFiles []models.FileChange
+	if files != "" {
+		for _, f := range strings.Split(files, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				affectedFiles = append(affectedFiles, models.FileChange{
+					Path: f, ChangeType: "modify",
+				})
+			}
 		}
 	}
 
-	newSnap, err := changedetect.NewDetector(s.projectRoot).ScanSnapshot()
-	if err != nil {
-		return mcpgo.NewToolResultError(fmt.Sprintf("扫描文件失败: %v", err)), nil
+	var tagList []string
+	if tags != "" {
+		for _, t := range strings.Split(tags, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				tagList = append(tagList, t)
+			}
+		}
 	}
 
-	entry, err := s.core.CaptureAndIndex(s.lastSnap, newSnap, sessionID)
-	if err != nil {
-		return mcpgo.NewToolResultError(fmt.Sprintf("捕获变更失败: %v", err)), nil
+	entry := &models.StructuredEntry{
+		ID:             utils.GenerateID(),
+		Timestamp:      time.Now(),
+		SessionID:      "agent-report",
+		Summary:        what,
+		DesignDecision: why,
+		ImpactAnalysis: problem,
+		AffectedFiles:  affectedFiles,
+		Tags:           tagList,
 	}
 
-	s.lastSnap = newSnap
-	_ = changedetect.SaveLastSnap(s.projectRoot, s.lastSnap)
+	if err := s.core.IndexEntry(entry); err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("索引失败: %v", err)), nil
+	}
+
+	_ = s.core.RefreshAgentsMD()
 
 	data, _ := json.Marshal(entry)
 	return mcpgo.NewToolResultText(string(data)), nil
 }
 
-func (s *StdioServer) handleFullIndex(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	entry, err := s.core.FullIndex()
+func (s *StdioServer) handleIndexProject(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	entry, err := s.core.IndexProject()
 	if err != nil {
 		return mcpgo.NewToolResultError(fmt.Sprintf("全量索引失败: %v", err)), nil
 	}
 	data, _ := json.Marshal(entry)
+	return mcpgo.NewToolResultText(string(data)), nil
+}
+
+func (s *StdioServer) handleGetProjectStructure(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	nodes, edges, err := s.core.GetGraphData(200)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("获取结构失败: %v", err)), nil
+	}
+	data, _ := json.Marshal(map[string]interface{}{"nodes": nodes, "edges": edges})
 	return mcpgo.NewToolResultText(string(data)), nil
 }

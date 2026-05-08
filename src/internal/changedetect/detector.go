@@ -28,11 +28,19 @@ type FileSnapshot struct {
 	Hash    string `json:"hash"`
 }
 
+var ignoreExtensions = []string{".class", ".pyc", ".pyo", ".o", ".so", ".dll", ".exe", ".bin", ".flat", ".dex"}
+
 // NewDetector 创建一个变动检测器
 func NewDetector(projectRoot string) *Detector {
 	return &Detector{
 		projectRoot: projectRoot,
-		ignoreList:  []string{".git", ".chronodraft", "node_modules", "vendor"},
+		ignoreList: []string{
+			".git", ".chronodraft", "node_modules", "vendor",
+			"build", "dist", "target", "out", "bin", "obj",
+			"__pycache__", ".next", ".nuxt", ".output",
+			".gradle", ".idea", ".vscode", ".vs",
+			".DS_Store", "Thumbs.db", "*.log",
+		},
 	}
 }
 
@@ -51,6 +59,16 @@ func (d *Detector) shouldIgnore(path string) bool {
 	return false
 }
 
+func (d *Detector) shouldIgnoreByExtension(path string) bool {
+	ext := filepath.Ext(path)
+	for _, ig := range ignoreExtensions {
+		if ext == ig {
+			return true
+		}
+	}
+	return false
+}
+
 // ScanSnapshot 扫描项目目录并生成当前文件快照
 func (d *Detector) ScanSnapshot() (map[string]FileSnapshot, error) {
 	snapshot := make(map[string]FileSnapshot)
@@ -59,7 +77,7 @@ func (d *Detector) ScanSnapshot() (map[string]FileSnapshot, error) {
 			return err
 		}
 		rel, _ := filepath.Rel(d.projectRoot, path)
-		if d.shouldIgnore(rel) || info.IsDir() {
+		if d.shouldIgnore(rel) || d.shouldIgnoreByExtension(rel) || info.IsDir() {
 			return nil
 		}
 		data, err := os.ReadFile(path)

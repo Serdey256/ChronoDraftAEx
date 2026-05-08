@@ -206,12 +206,12 @@ func (s *ChronoService) ListEntries(offset, limit int) ([]models.StructuredEntry
 	return s.core.ListEntries(offset, limit)
 }
 
-// FullIndex 前端调用：全量索引项目现有代码
-func (s *ChronoService) FullIndex() (*models.StructuredEntry, error) {
+// IndexProject 前端调用：全量索引项目现有代码
+func (s *ChronoService) IndexProject() (*models.StructuredEntry, error) {
 	if s.core == nil {
 		return nil, fmt.Errorf("记忆内核未初始化")
 	}
-	return s.core.FullIndex()
+	return s.core.IndexProject()
 }
 
 // IsKnowledgeBaseEmpty 前端调用：检查知识库是否为空

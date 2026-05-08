@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -261,6 +262,51 @@ func (g *GraphDB) GetGraphData(ctx context.Context, limit int) ([]models.Knowled
 	}
 
 	return nodes, edges, nil
+}
+
+// UpdateFileStructure 更新项目文件结构到图谱
+func (g *GraphDB) UpdateFileStructure(ctx context.Context, dirs, files map[string]string) error {
+	tx, err := g.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Insert directory nodes
+	for path, desc := range dirs {
+		_, err = tx.ExecContext(ctx,
+			`INSERT OR REPLACE INTO nodes (id, label, type, metadata) VALUES (?, ?, ?, ?)`,
+			"dir:"+path, path, "directory", fmt.Sprintf(`{"purpose":"%s"}`, desc),
+		)
+		if err != nil {
+			return fmt.Errorf("insert dir node: %w", err)
+		}
+	}
+
+	// Insert file nodes
+	for path, desc := range files {
+		_, err = tx.ExecContext(ctx,
+			`INSERT OR REPLACE INTO nodes (id, label, type, metadata) VALUES (?, ?, ?, ?)`,
+			"file:"+path, path, "file", fmt.Sprintf(`{"purpose":"%s"}`, desc),
+		)
+		if err != nil {
+			return fmt.Errorf("insert file node: %w", err)
+		}
+
+		// Create CONTAINS edge from parent dir to file
+		parent := filepath.Dir(path)
+		if parent != "." {
+			_, err = tx.ExecContext(ctx,
+				`INSERT OR IGNORE INTO edges (source_id, target_id, relation) VALUES (?, ?, ?)`,
+				"dir:"+parent, "file:"+path, "CONTAINS",
+			)
+			if err != nil {
+				return fmt.Errorf("insert contains edge: %w", err)
+			}
+		}
+	}
+
+	return tx.Commit()
 }
 
 // Close 关闭图数据库连接
