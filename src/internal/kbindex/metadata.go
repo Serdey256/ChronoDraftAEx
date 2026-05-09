@@ -56,6 +56,25 @@ CREATE TABLE IF NOT EXISTS file_changes (
 	FOREIGN KEY (entry_id) REFERENCES entries(id)
 );
 
+CREATE TABLE IF NOT EXISTS commits (
+	hash TEXT PRIMARY KEY,
+	message TEXT NOT NULL,
+	author TEXT,
+	timestamp DATETIME NOT NULL,
+	files TEXT,
+	insertions INTEGER DEFAULT 0,
+	deletions INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS code_entities (
+	file_path TEXT NOT NULL,
+	entity_type TEXT NOT NULL,
+	name TEXT NOT NULL,
+	signature TEXT,
+	metadata TEXT,
+	PRIMARY KEY (file_path, name, entity_type)
+);
+
 CREATE INDEX IF NOT EXISTS idx_entries_session ON entries(session_id);
 CREATE INDEX IF NOT EXISTS idx_entries_time ON entries(timestamp);
 CREATE INDEX IF NOT EXISTS idx_file_changes_entry ON file_changes(entry_id);
@@ -243,7 +262,174 @@ func (m *MetadataStore) getFileChanges(entryID string) ([]models.FileChange, err
 	return changes, rows.Err()
 }
 
+// SaveCommit 保存 git commit 记录（INSERT OR REPLACE 实现幂等）
+func (m *MetadataStore) SaveCommit(hash, message, author, timestamp, files string, ins, dels int) error {
+	_, err := m.db.Exec(
+		`INSERT OR REPLACE INTO commits (hash, message, author, timestamp, files, insertions, deletions)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		hash, message, author, timestamp, files, ins, dels,
+	)
+	if err != nil {
+		return fmt.Errorf("保存 commit 记录失败: %w", err)
+	}
+	return nil
+}
+
+// ListCommits 列出 git commit 记录（按时间倒序）
+func (m *MetadataStore) ListCommits(limit int) ([]models.CommitRecord, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := m.db.Query(
+		`SELECT hash, message, author, timestamp, files, insertions, deletions
+		 FROM commits ORDER BY timestamp DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var commits []models.CommitRecord
+	for rows.Next() {
+		var c models.CommitRecord
+		if err := rows.Scan(&c.Hash, &c.Message, &c.Author, &c.Timestamp, &c.Files, &c.Insertions, &c.Deletions); err != nil {
+			return nil, err
+		}
+		commits = append(commits, c)
+	}
+	return commits, rows.Err()
+}
+
+// SaveCodeEntities 保存文件的所有代码实体（事务：先删除旧记录，再批量插入）
+func (m *MetadataStore) SaveCodeEntities(filePath string, entities []models.CodeEntity) error {
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`DELETE FROM code_entities WHERE file_path = ?`, filePath)
+	if err != nil {
+		return fmt.Errorf("删除旧代码实体失败: %w", err)
+	}
+
+	stmt, err := tx.Prepare(
+		`INSERT OR REPLACE INTO code_entities (file_path, entity_type, name, signature, metadata) VALUES (?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		return fmt.Errorf("预编译插入语句失败: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, e := range entities {
+		_, err = stmt.Exec(e.FilePath, e.EntityType, e.Name, e.Signature, e.Metadata)
+		if err != nil {
+			return fmt.Errorf("插入代码实体失败: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetCodeEntities 查询指定文件的所有代码实体
+func (m *MetadataStore) GetCodeEntities(filePath string) ([]models.CodeEntity, error) {
+	rows, err := m.db.Query(
+		`SELECT file_path, entity_type, name, signature, metadata FROM code_entities WHERE file_path = ?`,
+		filePath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entities []models.CodeEntity
+	for rows.Next() {
+		var e models.CodeEntity
+		var sig, meta sql.NullString
+		if err := rows.Scan(&e.FilePath, &e.EntityType, &e.Name, &sig, &meta); err != nil {
+			return nil, err
+		}
+		if sig.Valid {
+			e.Signature = sig.String
+		}
+		if meta.Valid {
+			e.Metadata = meta.String
+		}
+		entities = append(entities, e)
+	}
+	if entities == nil {
+		entities = []models.CodeEntity{}
+	}
+	return entities, rows.Err()
+}
+
+// UpdateCodeEntityMetadata 更新指定代码实体的 metadata
+func (m *MetadataStore) UpdateCodeEntityMetadata(filePath, name, entityType, metadata string) error {
+	_, err := m.db.Exec(
+		`UPDATE code_entities SET metadata = ? WHERE file_path = ? AND name = ? AND entity_type = ?`,
+		metadata, filePath, name, entityType,
+	)
+	return err
+}
+
+// DeleteCodeEntities 删除指定文件的所有代码实体
+func (m *MetadataStore) DeleteCodeEntities(filePath string) error {
+	_, err := m.db.Exec(`DELETE FROM code_entities WHERE file_path = ?`, filePath)
+	if err != nil {
+		return fmt.Errorf("删除代码实体失败: %w", err)
+	}
+	return nil
+}
+
 // Close 关闭数据库连接
 func (m *MetadataStore) Close() error {
 	return m.db.Close()
+}
+
+// ListCodeEntityFiles 返回所有已分析的文件路径（去重）
+func (m *MetadataStore) ListCodeEntityFiles() ([]string, error) {
+	rows, err := m.db.Query(`SELECT DISTINCT file_path FROM code_entities ORDER BY file_path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		files = append(files, path)
+	}
+	return files, rows.Err()
+}
+
+// GetAllCodeEntities 返回所有代码实体
+func (m *MetadataStore) GetAllCodeEntities() ([]models.CodeEntity, error) {
+	rows, err := m.db.Query(`SELECT file_path, entity_type, name, signature, metadata FROM code_entities ORDER BY file_path, entity_type`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entities []models.CodeEntity
+	for rows.Next() {
+		var e models.CodeEntity
+		var sig, meta sql.NullString
+		if err := rows.Scan(&e.FilePath, &e.EntityType, &e.Name, &sig, &meta); err != nil {
+			return nil, err
+		}
+		if sig.Valid {
+			e.Signature = sig.String
+		}
+		if meta.Valid {
+			e.Metadata = meta.String
+		}
+		entities = append(entities, e)
+	}
+	if entities == nil {
+		entities = []models.CodeEntity{}
+	}
+	return entities, rows.Err()
 }

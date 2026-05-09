@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ChronoDraftAEx/pkg/models"
+	"ChronoDraftAEx/pkg/utils"
 )
 
 const (
@@ -33,6 +34,14 @@ func NewWriter(projectRoot string) *Writer {
 // SetOutputPath 覆盖默认输出路径
 func (w *Writer) SetOutputPath(path string) {
 	w.outputPath = path
+}
+
+// WriteContent 将任意内容直接写入 AGENTS.md（覆盖模式）
+func (w *Writer) WriteContent(content string) error {
+	if err := os.MkdirAll(filepath.Dir(w.outputPath), 0o755); err != nil {
+		return fmt.Errorf("agentswriter: create dir: %w", err)
+	}
+	return os.WriteFile(w.outputPath, []byte(content), 0o644)
 }
 
 // Write 将搜索结果全量写入 AGENTS.md（覆盖模式）
@@ -111,4 +120,143 @@ func formatEntry(sb *strings.Builder, entry models.StructuredEntry) {
 		sb.WriteString(fmt.Sprintf("- **标签**: %v\n", entry.Tags))
 	}
 	sb.WriteString("\n")
+}
+
+// ---------------------------------------------------------------------------
+// Smart AGENTS.md generation (≤1500 tokens, standalone data-driven function)
+// ---------------------------------------------------------------------------
+
+// GenerateSmartMarkdown 生成 ≤1500 tokens 的智能 AGENTS.md 内容。
+//
+// 参数:
+//   - commits:    最近的 git commit 记录（按时间降序排列，最新的在前）
+//   - entries:    结构化知识条目（按时间降序排列）
+//   - dirStructure: 预计算的目录树字符串
+//
+// 内容包含 4 个章节: 项目概览 / 关键设计决策 / 最近动态 / 项目结构。
+// 超出 token 预算时按优先级截断: 项目结构 → 最近动态 → 关键决策 → 项目概览。
+func GenerateSmartMarkdown(commits []models.CommitRecord, entries []models.StructuredEntry, dirStructure string) string {
+	const maxTokens = 1500
+
+	overviewContent := buildOverview(entries)
+	toolsContent := buildToolsSection()
+	decisionsContent := buildDecisionsSection(entries, 5)
+	recentContent := buildRecentChanges(commits, 3)
+	structureContent := buildStructureSection(dirStructure)
+
+	// assembleContent 将当前各章节拼接为完整文档
+	assembleContent := func() string {
+		var sb strings.Builder
+		sb.WriteString("# 项目上下文（≤1500 tokens）\n\n")
+		sb.WriteString(overviewContent)
+		sb.WriteString(toolsContent)
+		sb.WriteString(decisionsContent)
+		sb.WriteString(recentContent)
+		sb.WriteString(structureContent)
+		return sb.String()
+	}
+
+	content := assembleContent()
+
+	// 超额截断：从低优先级到高优先级依次缩减
+	if utils.EstimateTokens(content) > maxTokens {
+		structureContent = utils.TruncateToBudget(structureContent, 200)
+		content = assembleContent()
+	}
+	if utils.EstimateTokens(content) > maxTokens {
+		recentContent = buildRecentChanges(commits, 1)
+		content = assembleContent()
+	}
+	if utils.EstimateTokens(content) > maxTokens {
+		decisionsContent = buildDecisionsSection(entries, 2)
+		content = assembleContent()
+	}
+	if utils.EstimateTokens(content) > maxTokens {
+		overviewContent = utils.TruncateToBudget(overviewContent, 50)
+		content = assembleContent()
+	}
+
+	return content
+}
+
+// buildOverview 构建"项目概览"章节
+func buildOverview(entries []models.StructuredEntry) string {
+	var sb strings.Builder
+	sb.WriteString("## 项目概览\n\n")
+	sb.WriteString("由 ChronoDraftAEx 自动维护的项目级记忆。\n\n")
+	if len(entries) > 0 {
+		sb.WriteString(fmt.Sprintf("**最新条目**: %s\n\n", entries[0].Summary))
+	}
+	return sb.String()
+}
+
+// buildDecisionsSection 构建"关键设计决策"章节，列出 topN 条压缩后的决策
+func buildDecisionsSection(entries []models.StructuredEntry, topN int) string {
+	var sb strings.Builder
+	sb.WriteString("## 关键设计决策\n\n")
+
+	if len(entries) == 0 || topN <= 0 {
+		sb.WriteString("暂无设计决策。Agent 可通过 record_change(what, why, problem, files, tags) 记录。\n\n")
+		return sb.String()
+	}
+
+	if topN > len(entries) {
+		topN = len(entries)
+	}
+	for i := 0; i < topN; i++ {
+		compressed := utils.CompressEntry(entries[i], 80)
+		sb.WriteString(fmt.Sprintf("- %s\n", compressed))
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// buildRecentChanges 构建"最近动态"章节，列出 limit 条最近的 commit
+func buildRecentChanges(commits []models.CommitRecord, limit int) string {
+	var sb strings.Builder
+	sb.WriteString("## 最近动态\n\n")
+
+	if len(commits) == 0 || limit <= 0 {
+		sb.WriteString("暂无最近的代码变更。\n\n")
+		return sb.String()
+	}
+
+	if limit > len(commits) {
+		limit = len(commits)
+	}
+	for i := 0; i < limit; i++ {
+		c := commits[i]
+		hash := c.Hash
+		if len(hash) > 8 {
+			hash = hash[:8]
+		}
+		sb.WriteString(fmt.Sprintf("- [`%s`] %s — %s (%s)\n", hash, c.Message, c.Author, c.Timestamp))
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// buildStructureSection 构建"项目结构"章节
+func buildStructureSection(dirStructure string) string {
+	var sb strings.Builder
+	sb.WriteString("## 项目结构\n\n")
+
+	if dirStructure == "" {
+		sb.WriteString("暂无项目结构信息。\n\n")
+		return sb.String()
+	}
+
+	sb.WriteString(dirStructure)
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// buildToolsSection 构建"可用工具"章节，告知 Agent 可用的 MCP 工具
+func buildToolsSection() string {
+	return "## 💡 可用工具\n\n" +
+		"- `get_context(files=\"a.go,b.go\")` — 获取文件的变更历史、代码结构、相关决策和关联文件\n" +
+		"- `get_code_entities(files=\"a.go\")` — 获取文件的函数签名、类型定义和导入关系\n" +
+		"- `search_knowledge(query)` — 语义搜索历史设计决策和变更记录\n" +
+		"- `get_snapshot()` — 获取最新的项目全局上下文快照\n" +
+		"- `record_change(what, why, problem, files, tags)` — 记录本次修改的设计决策\n\n"
 }

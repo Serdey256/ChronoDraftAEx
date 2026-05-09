@@ -315,6 +315,29 @@ export class StructuredEntry {
     }
 }
 
+/**
+ * CodeEntity 表示代码中的实体（函数、结构体、接口、导入等）
+ */
+export class CodeEntity {
+    "file_path": string;
+    "entity_type": string;
+    "name": string;
+    "signature"?: string;
+    "metadata"?: string;
+
+    constructor($$source: Partial<CodeEntity> = {}) {
+        if (!("file_path" in $$source)) this["file_path"] = "";
+        if (!("entity_type" in $$source)) this["entity_type"] = "";
+        if (!("name" in $$source)) this["name"] = "";
+        Object.assign(this, $$source);
+    }
+
+    static createFrom($$source: any = {}): CodeEntity {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CodeEntity($$parsedSource as Partial<CodeEntity>);
+    }
+}
+
 // Private type creation functions
 const $$createType0 = KnowledgeNode.createFrom;
 const $$createType1 = $Create.Array($$createType0);

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ChronoDraftAEx/pkg/models"
+	"ChronoDraftAEx/pkg/utils"
 )
 
 func fixedTime() time.Time {
@@ -156,5 +157,141 @@ func TestCustomOutputPath(t *testing.T) {
 
 	if !strings.Contains(string(data), "# ChronoDraftAEx 项目知识快照") {
 		t.Error("custom path file missing header")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GenerateSmartMarkdown tests
+// ---------------------------------------------------------------------------
+
+func TestGenerateSmartMarkdown_Basic(t *testing.T) {
+	commits := []models.CommitRecord{
+		{Hash: "abc123def456", Message: "添加用户认证模块", Author: "Alice", Timestamp: "2025-06-15"},
+		{Hash: "def789abc012", Message: "修复登录页面样式", Author: "Bob", Timestamp: "2025-06-14"},
+		{Hash: "ghi345jkl678", Message: "重构数据库层", Author: "Alice", Timestamp: "2025-06-13"},
+	}
+	entries := []models.StructuredEntry{
+		sampleEntry("添加用户认证模块"),
+		sampleEntry("修复登录页面样式"),
+		sampleEntry("重构数据库层"),
+		sampleEntry("性能优化"),
+		sampleEntry("更新文档"),
+	}
+	dirStructure := "src/\n  main.go\n  internal/\n    auth/\n      login.go\n"
+
+	md := GenerateSmartMarkdown(commits, entries, dirStructure)
+
+	// Verify all 4 sections present
+	if !strings.Contains(md, "# 项目上下文") {
+		t.Error("missing document title")
+	}
+	if !strings.Contains(md, "## 项目概览") {
+		t.Error("missing 项目概览 section")
+	}
+	if !strings.Contains(md, "## 关键设计决策") {
+		t.Error("missing 关键设计决策 section")
+	}
+	if !strings.Contains(md, "## 最近动态") {
+		t.Error("missing 最近动态 section")
+	}
+	if !strings.Contains(md, "## 项目结构") {
+		t.Error("missing 项目结构 section")
+	}
+
+	// Verify commit hash appears (truncated to 8 chars)
+	if !strings.Contains(md, "abc123de") {
+		t.Error("missing commit hash")
+	}
+
+	// Verify token budget
+	tokens := utils.EstimateTokens(md)
+	if tokens > 1500 {
+		t.Errorf("token count %d exceeds limit 1500", tokens)
+	}
+}
+
+func TestGenerateSmartMarkdown_Empty(t *testing.T) {
+	md := GenerateSmartMarkdown(nil, nil, "")
+
+	if !strings.Contains(md, "# 项目上下文") {
+		t.Error("missing document title")
+	}
+	if !strings.Contains(md, "## 项目概览") {
+		t.Error("missing 项目概览 section")
+	}
+	if !strings.Contains(md, "暂无最近的代码变更") {
+		t.Error("should show empty message for commits")
+	}
+	if !strings.Contains(md, "暂无设计决策") {
+		t.Error("should show empty message for decisions")
+	}
+	if !strings.Contains(md, "暂无项目结构信息") {
+		t.Error("should show empty message for structure")
+	}
+
+	tokens := utils.EstimateTokens(md)
+	if tokens > 1500 {
+		t.Errorf("token count %d exceeds limit 1500", tokens)
+	}
+}
+
+func TestGenerateSmartMarkdown_OverBudget(t *testing.T) {
+	// Force truncation by providing a very large directory structure
+	largeDir := strings.Repeat("  some/deep/nested/directory/\n    file.go\n", 100)
+	entries := []models.StructuredEntry{
+		sampleEntry("条目1"),
+		sampleEntry("条目2"),
+		sampleEntry("条目3"),
+		sampleEntry("条目4"),
+		sampleEntry("条目5"),
+	}
+	commits := []models.CommitRecord{
+		{Hash: "abc123def", Message: "提交一", Author: "A", Timestamp: "2025-06-15"},
+		{Hash: "ghi456jkl", Message: "提交二", Author: "B", Timestamp: "2025-06-14"},
+		{Hash: "mno789pqr", Message: "提交三", Author: "C", Timestamp: "2025-06-13"},
+	}
+
+	md := GenerateSmartMarkdown(commits, entries, largeDir)
+	tokens := utils.EstimateTokens(md)
+	if tokens > 1500 {
+		t.Errorf("token count %d exceeds limit 1500 after truncation", tokens)
+	}
+
+	// All 4 sections must still be present after truncation
+	if !strings.Contains(md, "## 项目概览") {
+		t.Error("missing 项目概览 section after truncation")
+	}
+	if !strings.Contains(md, "## 关键设计决策") {
+		t.Error("missing 关键设计决策 section after truncation")
+	}
+	if !strings.Contains(md, "## 最近动态") {
+		t.Error("missing 最近动态 section after truncation")
+	}
+	if !strings.Contains(md, "## 项目结构") {
+		t.Error("missing 项目结构 section after truncation")
+	}
+}
+
+func TestGenerateSmartMarkdown_LessData(t *testing.T) {
+	// Test with fewer entries and commits than the display limits
+	commits := []models.CommitRecord{
+		{Hash: "abc", Message: "仅有一次提交", Author: "Dev", Timestamp: "2025-06-15"},
+	}
+	entries := []models.StructuredEntry{
+		sampleEntry("仅有一条条目"),
+	}
+
+	md := GenerateSmartMarkdown(commits, entries, "src/\n  main.go\n")
+
+	if !strings.Contains(md, "仅有一次提交") {
+		t.Error("missing single commit")
+	}
+	if !strings.Contains(md, "仅有一条条目") {
+		t.Error("missing single entry")
+	}
+
+	tokens := utils.EstimateTokens(md)
+	if tokens > 1500 {
+		t.Errorf("token count %d exceeds limit 1500", tokens)
 	}
 }

@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const embeddingDim = 1536 // text-embedding-3-small 维度
+const embeddingDim = 1536 // text-embedding-3-small 维度（仅作降级零向量用，实际维度由 API 返回决定）
 
 // VectorDB 向量数据库封装（基于 SQLite + 余弦相似度）
 type VectorDB struct {
@@ -27,6 +27,7 @@ type VectorDB struct {
 	apiKey   string
 	apiBase  string
 	model    string
+	dim      int // 动态维度，首次 API 调用后确定
 }
 
 // NewVectorDB 创建向量数据库实例
@@ -77,7 +78,11 @@ func (v *VectorDB) InsertEntry(ctx context.Context, entry *models.StructuredEntr
 	vec, err := v.generateEmbedding(ctx, text)
 	if err != nil {
 		// 嵌入失败时使用零向量（降级处理）
-		vec = make([]float32, embeddingDim)
+		dim := v.dim
+		if dim == 0 {
+			dim = embeddingDim // 未初始化时用默认值
+		}
+		vec = make([]float32, dim)
 	}
 
 	embeddingBlob := encodeVector(vec)
@@ -239,13 +244,19 @@ func (v *VectorDB) generateEmbedding(ctx context.Context, text string) ([]float3
 	if len(result.Data) == 0 {
 		return nil, fmt.Errorf("embedding API 返回空数据")
 	}
-	return result.Data[0].Embedding, nil
+	vec := result.Data[0].Embedding
+	// 动态记录向量维度（兼容 OpenAI 1536 / DeepSeek 1024 等不同模型）
+	if v.dim == 0 && len(vec) > 0 {
+		v.dim = len(vec)
+	}
+	return vec, nil
 }
 
 func (v *VectorDB) embeddingModel() string {
 	if v.model != "" {
 		return v.model
 	}
+	// 默认：常见嵌入模型，按优先级尝试
 	return "text-embedding-3-small"
 }
 

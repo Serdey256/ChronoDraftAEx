@@ -105,6 +105,11 @@ func (k *KBIndex) GetGraphData(ctx context.Context, limit int) ([]models.Knowled
 	return k.graphDB.GetGraphData(ctx, limit)
 }
 
+// QueryRelated 查询与指定条目相关的知识节点
+func (k *KBIndex) QueryRelated(ctx context.Context, entryID string) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	return k.graphDB.QueryRelated(ctx, entryID)
+}
+
 // ListEntries 列出知识条目
 func (k *KBIndex) ListEntries(offset, limit int) ([]models.StructuredEntry, error) {
 	return k.metaDB.ListEntries(offset, limit)
@@ -118,6 +123,46 @@ func (k *KBIndex) SaveSnapshot(snapshot *models.ProjectSnapshot) error {
 // ListSnapshots 列出所有快照
 func (k *KBIndex) ListSnapshots() ([]models.ProjectSnapshot, error) {
 	return k.metaDB.ListSnapshots()
+}
+
+// SaveCommit 保存 git commit 记录
+func (k *KBIndex) SaveCommit(hash, message, author, timestamp, files string, ins, dels int) error {
+	return k.metaDB.SaveCommit(hash, message, author, timestamp, files, ins, dels)
+}
+
+// ListCommits 列出 git commit 记录
+func (k *KBIndex) ListCommits(limit int) ([]models.CommitRecord, error) {
+	return k.metaDB.ListCommits(limit)
+}
+
+// SaveCodeEntities 保存文件的所有代码实体
+func (k *KBIndex) SaveCodeEntities(filePath string, entities []models.CodeEntity) error {
+	return k.metaDB.SaveCodeEntities(filePath, entities)
+}
+
+// GetCodeEntities 查询指定文件的所有代码实体
+func (k *KBIndex) GetCodeEntities(filePath string) ([]models.CodeEntity, error) {
+	return k.metaDB.GetCodeEntities(filePath)
+}
+
+// DeleteCodeEntities 删除指定文件的所有代码实体
+func (k *KBIndex) DeleteCodeEntities(filePath string) error {
+	return k.metaDB.DeleteCodeEntities(filePath)
+}
+
+// ListCodeEntityFiles 返回所有已分析的文件路径
+func (k *KBIndex) ListCodeEntityFiles() ([]string, error) {
+	return k.metaDB.ListCodeEntityFiles()
+}
+
+// UpdateCodeEntityMetadata 更新指定代码实体的 metadata
+func (k *KBIndex) UpdateCodeEntityMetadata(filePath, name, entityType, metadata string) error {
+	return k.metaDB.UpdateCodeEntityMetadata(filePath, name, entityType, metadata)
+}
+
+// GetAllCodeEntities 返回所有代码实体
+func (k *KBIndex) GetAllCodeEntities() ([]models.CodeEntity, error) {
+	return k.metaDB.GetAllCodeEntities()
 }
 
 // Close 关闭所有数据库连接

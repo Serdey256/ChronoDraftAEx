@@ -49,5 +49,13 @@ export interface GraphData {
   edges: KnowledgeEdge[]
 }
 
+export interface CodeEntity {
+  file_path: string
+  entity_type: string  // function, struct, interface, import, class, const
+  name: string
+  signature?: string
+  metadata?: string   // JSON string
+}
+
 // 前端类型定义（与后端 models 对应）
 // Wails v3 绑定通过 generated bindings 导入，不再使用 window.go

@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard'
 import KnowledgeGraph from './components/KnowledgeGraph'
 import SnapshotView from './components/SnapshotView'
 import ProjectManager from './components/ProjectManager'
+import CodeEntities from './components/CodeEntities'
 
 function App() {
   return (
@@ -72,6 +73,9 @@ function AppContent() {
             <NavLink to="/projects" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
               📁 项目管理
             </NavLink>
+            <NavLink to="/code" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+              🧬 代码结构
+            </NavLink>
           </nav>
           <div className="sidebar-footer">
             <div className="status-indicator">
@@ -114,6 +118,7 @@ function AppContent() {
             <Route path="/graph" element={<KnowledgeGraph />} />
             <Route path="/snapshot" element={<SnapshotView />} />
             <Route path="/projects" element={<ProjectManager />} />
+            <Route path="/code" element={<CodeEntities />} />
           </Routes>
         </main>
       </div>

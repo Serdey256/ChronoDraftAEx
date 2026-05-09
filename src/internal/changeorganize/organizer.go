@@ -103,6 +103,85 @@ Session ID: %s
 `, record.SessionID, record.Timestamp.Format(time.RFC3339), filesDesc)
 }
 
+// AnnotateEntities 使用 AI 为代码实体生成简短中文描述（15字以内）
+// 接收代码实体列表，为每个尚无描述的实体生成描述并更新其 Metadata 字段
+// 无 API Key 时直接返回原列表（不报错）
+func (o *Organizer) AnnotateEntities(entities []models.CodeEntity) ([]models.CodeEntity, error) {
+	if o.apiKey == "" {
+		return entities, nil
+	}
+
+	// 过滤出需要标注的实体（Metadata 中尚无 description）
+	var toAnnotate []models.CodeEntity
+	for _, e := range entities {
+		if e.Metadata == "" || !strings.Contains(e.Metadata, "\"description\"") {
+			toAnnotate = append(toAnnotate, e)
+		}
+	}
+	if len(toAnnotate) == 0 {
+		return entities, nil
+	}
+
+	// 构建提示词
+	var sb strings.Builder
+	sb.WriteString("为以下代码实体各生成一句简短的中文描述（15字以内），说明其功能。")
+	sb.WriteString("返回 JSON 数组，格式：[{\"name\":\"实体名\",\"entity_type\":\"类型\",\"description\":\"中文描述\"}]，不要包含 markdown 代码块标记：\n")
+	for _, e := range toAnnotate {
+		sb.WriteString(fmt.Sprintf("- %s %s", e.EntityType, e.Name))
+		if e.Signature != "" {
+			sb.WriteString(fmt.Sprintf(": %s", e.Signature))
+		}
+		sb.WriteString(fmt.Sprintf(" (file: %s)\n", e.FilePath))
+	}
+
+	aiResponse, err := o.callAI(sb.String())
+	if err != nil {
+		return entities, fmt.Errorf("AI 标注调用失败: %w", err)
+	}
+
+	// 清理响应：移除可能的 markdown 代码块标记
+	cleaned := strings.TrimSpace(aiResponse)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	var annotations []struct {
+		Name        string `json:"name"`
+		EntityType  string `json:"entity_type"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(cleaned), &annotations); err != nil {
+		return entities, fmt.Errorf("解析 AI 标注响应失败: %w", err)
+	}
+
+	// 构建查找表
+	type entityKey struct{ name, entityType string }
+	descMap := make(map[entityKey]string)
+	for _, a := range annotations {
+		descMap[entityKey{a.Name, a.EntityType}] = a.Description
+	}
+
+	// 更新实体 Metadata
+	for i := range entities {
+		key := entityKey{entities[i].Name, entities[i].EntityType}
+		desc, ok := descMap[key]
+		if !ok || desc == "" {
+			continue
+		}
+		// 如果 Metadata 已有内容，追加 description；否则新建
+		meta := make(map[string]string)
+		if entities[i].Metadata != "" {
+			_ = json.Unmarshal([]byte(entities[i].Metadata), &meta)
+		}
+		meta["description"] = desc
+		metaBytes, _ := json.Marshal(meta)
+		entities[i].Metadata = string(metaBytes)
+	}
+
+	return entities, nil
+}
+
 // callAI 调用云端 AI API（支持 OpenAI 兼容格式）
 func (o *Organizer) callAI(prompt string) (string, error) {
 	if o.apiKey == "" {

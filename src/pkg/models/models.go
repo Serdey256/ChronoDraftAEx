@@ -63,6 +63,26 @@ type SearchResult struct {
 	NodePath []KnowledgeNode `json:"node_path,omitempty"`
 }
 
+// CommitRecord 表示一次 git commit 记录
+type CommitRecord struct {
+	Hash       string `json:"hash"`
+	Message    string `json:"message"`
+	Author     string `json:"author"`
+	Timestamp  string `json:"timestamp"`
+	Files      string `json:"files"`
+	Insertions int    `json:"insertions"`
+	Deletions  int    `json:"deletions"`
+}
+
+// CodeEntity 表示代码中的实体（函数、结构体、接口、导入等）
+type CodeEntity struct {
+	FilePath   string `json:"file_path"`
+	EntityType string `json:"entity_type"` // function, struct, interface, import
+	Name       string `json:"name"`
+	Signature  string `json:"signature,omitempty"`
+	Metadata   string `json:"metadata,omitempty"` // JSON 格式的额外元数据
+}
+
 // GraphData 是知识图谱的完整数据
 type GraphData struct {
 	Nodes []KnowledgeNode `json:"nodes"`

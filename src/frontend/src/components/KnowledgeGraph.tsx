@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
-import { GetGraphData } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { Call } from '@wailsio/runtime'
 import { useToast } from '../contexts/ToastContext'
 
 interface SimNode extends d3.SimulationNodeDatum {
@@ -24,38 +24,33 @@ const colorMap: Record<string, string> = {
 
 function KnowledgeGraph() {
   const svgRef = useRef<SVGSVGElement>(null)
-  const [loading, setLoading] = useState(false)
   const toast = useToast()
+  const [graphQuery, setGraphQuery] = useState('')
+  const [graphTopK, setGraphTopK] = useState(5)
+  const [graphLoading, setGraphLoading] = useState(false)
+
+  const searchGraph = async () => {
+    if (!graphQuery.trim()) return
+    setGraphLoading(true)
+    try {
+      const result = await (Call as any).ByName('main.ChronoService.GetGraphData', graphQuery, graphTopK, 'true')
+      const data = typeof result === 'string' ? JSON.parse(result) : result
+      if (svgRef.current) d3.select(svgRef.current).selectAll('*').remove()
+      if (data?.nodes?.length) {
+        const nodes: SimNode[] = data.nodes.map((n: any) => ({ id: n.id, label: n.label, type: n.type }))
+        const links: SimLink[] = data.edges.map((e: any) => ({ source: e.source_id, target: e.target_id, relation: e.relation }))
+        renderGraph(nodes, links)
+      } else {
+        toast.info('未找到相关图谱数据')
+      }
+    } catch (e: any) {
+      toast.error('图谱搜索失败: ' + (e.message || String(e)))
+    } finally {
+      setGraphLoading(false)
+    }
+  }
 
   useEffect(() => {
-    if (!svgRef.current) return
-
-    const loadAndRender = async () => {
-      setLoading(true)
-      let nodes: SimNode[] = []
-      let links: SimLink[] = []
-
-      try {
-        const result = await GetGraphData(100)
-        if (result?.nodes?.length) {
-          nodes = result.nodes.map((n: any) => ({ id: n.id, label: n.label, type: n.type }))
-          links = result.edges.map((e: any) => ({ source: e.source_id, target: e.target_id, relation: e.relation }))
-        }
-      } catch (e) {
-        toast.warning('获取图谱数据失败')
-      } finally {
-        setLoading(false)
-      }
-
-      if (nodes.length === 0) {
-        return
-      }
-
-      renderGraph(nodes, links)
-    }
-
-    loadAndRender()
-
     return () => {
       if (svgRef.current) d3.select(svgRef.current).selectAll('*').remove()
     }
@@ -168,7 +163,29 @@ function KnowledgeGraph() {
     <div>
       <div className="page-header">
         <h2>🕸️ 知识图谱</h2>
-        <p>{loading ? '加载中...' : '可视化浏览项目知识实体间的关联关系'}</p>
+        <p>可视化浏览项目知识实体间的关联关系</p>
+      </div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            className="input"
+            placeholder="输入关键词搜索关联图谱..."
+            value={graphQuery}
+            onChange={e => setGraphQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && searchGraph()}
+            style={{ flex: 1 }}
+          />
+          <select
+            value={graphTopK}
+            onChange={e => setGraphTopK(Number(e.target.value))}
+            style={{ width: 80, padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)' }}
+          >
+            {[3,5,10,15,20].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <button className="btn btn-primary" onClick={searchGraph} disabled={graphLoading}>
+            {graphLoading ? '搜索中...' : '搜索'}
+          </button>
+        </div>
       </div>
       <div className="graph-container">
         <svg ref={svgRef} width="100%" height="100%" />

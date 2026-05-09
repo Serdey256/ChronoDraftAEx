@@ -206,6 +206,85 @@ func (s *ChronoService) ListEntries(offset, limit int) ([]models.StructuredEntry
 	return s.core.ListEntries(offset, limit)
 }
 
+// GetCodeEntities 前端调用：获取指定文件的代码实体（AST 分析结果）
+func (s *ChronoService) GetCodeEntities(filePath string) ([]models.CodeEntity, error) {
+	if s.core == nil {
+		return nil, fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.GetCodeEntities(filePath)
+}
+
+// ListCodeEntityFiles 前端调用：获取所有已分析的文件路径
+func (s *ChronoService) ListCodeEntityFiles() ([]string, error) {
+	if s.core == nil {
+		return nil, fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.ListCodeEntityFiles()
+}
+
+// AnnotateAllCodeEntities 前端调用：对所有已有代码实体进行批量 AI 语义标注
+func (s *ChronoService) AnnotateAllCodeEntities() error {
+	if s.core == nil {
+		return fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.AnnotateAllCodeEntities()
+}
+
+// GetAllCodeEntities 前端调用：获取所有代码实体（AST 分析结果）
+func (s *ChronoService) GetAllCodeEntities() ([]models.CodeEntity, error) {
+	if s.core == nil {
+		return nil, fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.GetAllCodeEntities()
+}
+
+// GetAnnotationProgress 前端调用：获取 AI 标注进度 (current, total)
+func (s *ChronoService) GetAnnotationProgress() map[string]int {
+	if s.core == nil {
+		return map[string]int{"current": 0, "total": 0}
+	}
+	c, t := s.core.GetAnnotationProgress()
+	return map[string]int{"current": c, "total": t}
+}
+
+// GetIndexPhase 前端调用：获取全量索引当前阶段
+func (s *ChronoService) GetIndexPhase() string {
+	if s.core == nil {
+		return ""
+	}
+	return s.core.GetIndexPhase()
+}
+
+// SetAIAnnotation 前端调用：启用/禁用 AI 语义标注
+func (s *ChronoService) SetAIAnnotation(enabled bool) {
+	if s.core != nil {
+		s.core.SetAIAnnotation(enabled)
+	}
+}
+
+// IsAIAnnotationEnabled 前端调用：查询 AI 语义标注是否启用
+func (s *ChronoService) IsAIAnnotationEnabled() bool {
+	if s.core == nil {
+		return false
+	}
+	return s.core.IsAIAnnotationEnabled()
+}
+
+// SetAgentsMDEnabled 前端调用：启用/禁用 AGENTS.md 自动生成
+func (s *ChronoService) SetAgentsMDEnabled(enabled bool) {
+	if s.core != nil {
+		s.core.SetAgentsMDEnabled(enabled)
+	}
+}
+
+// IsAgentsMDEnabled 前端调用：查询 AGENTS.md 自动生成是否启用
+func (s *ChronoService) IsAgentsMDEnabled() bool {
+	if s.core == nil {
+		return true
+	}
+	return s.core.IsAgentsMDEnabled()
+}
+
 // IndexProject 前端调用：全量索引项目现有代码
 func (s *ChronoService) IndexProject() (*models.StructuredEntry, error) {
 	if s.core == nil {
