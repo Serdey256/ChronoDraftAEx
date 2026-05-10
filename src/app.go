@@ -195,6 +195,19 @@ func (s *ChronoService) GetGraphData(limit int) (*models.GraphData, error) {
 	return &models.GraphData{Nodes: nodes, Edges: edges}, nil
 }
 
+// SearchGraph 前端调用：关键词查询关联图谱
+func (s *ChronoService) SearchGraph(query string, topK int) (*models.GraphData, error) {
+	if s.core == nil {
+		return nil, fmt.Errorf("记忆内核未初始化")
+	}
+	if topK <= 0 { topK = 5 }
+	nodes, edges, err := s.core.SearchGraph(query, topK)
+	if err != nil {
+		return nil, err
+	}
+	return &models.GraphData{Nodes: nodes, Edges: edges}, nil
+}
+
 // ListEntries 前端调用：分页列出知识条目
 func (s *ChronoService) ListEntries(offset, limit int) ([]models.StructuredEntry, error) {
 	if s.core == nil {

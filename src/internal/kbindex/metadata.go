@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -333,6 +334,8 @@ func (m *MetadataStore) SaveCodeEntities(filePath string, entities []models.Code
 
 // GetCodeEntities 查询指定文件的所有代码实体
 func (m *MetadataStore) GetCodeEntities(filePath string) ([]models.CodeEntity, error) {
+	// Normalize to forward slash for cross-platform matching
+	filePath = strings.ReplaceAll(filePath, "\\", "/")
 	rows, err := m.db.Query(
 		`SELECT file_path, entity_type, name, signature, metadata FROM code_entities WHERE file_path = ?`,
 		filePath,

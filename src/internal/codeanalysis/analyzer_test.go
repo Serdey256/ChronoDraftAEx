@@ -978,3 +978,22 @@ func TestJSAnalyzer_FuncAndImport(t *testing.T) {
 		t.Errorf("expected react import, got %v", names)
 	}
 }
+
+func TestVueAnalyzer_ComponentAndImport(t *testing.T) {
+	dir := tempDir(t)
+	path := writeTempFile(t, dir, "Test.vue", `<script setup lang="ts">
+import { ref } from "vue"
+import LoginForm from "./LoginForm.vue"
+export function setupAuth() { return true }
+const count = ref(0)
+const MyComponent = defineComponent({})
+</script>
+<template><div>{{ count }}</div></template>
+`)
+	entities, err := AnalyzeFile(path)
+	if err != nil { t.Fatalf("AnalyzeFile: %v", err) }
+	names := entityNames(entities)
+	if !contains(names, "setupAuth") { t.Errorf("expected setupAuth function, got %v", names) }
+	if !contains(names, "MyComponent") { t.Errorf("expected MyComponent component, got %v", names) }
+	if !contains(names, "vue") { t.Errorf("expected vue import, got %v", names) }
+}

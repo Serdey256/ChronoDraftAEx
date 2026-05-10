@@ -190,6 +190,39 @@ func (m *MemoryCore) GetGraphData(limit int) ([]models.KnowledgeNode, []models.K
 	return m.kbIndex.GetGraphData(m.ctx, limit)
 }
 
+// SearchGraph 查询图谱：根据关键词搜索，返回关联子图
+func (m *MemoryCore) SearchGraph(query string, topK int) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	results, err := m.kbIndex.Search(m.ctx, query, topK)
+	if err != nil || len(results) == 0 {
+		entries, _ := m.kbIndex.ListEntries(0, 50)
+		for _, e := range entries {
+			if strings.Contains(strings.ToLower(e.Summary), strings.ToLower(query)) ||
+				strings.Contains(strings.ToLower(e.DesignDecision), strings.ToLower(query)) {
+				results = append(results, models.SearchResult{Entry: e, Score: 0.5})
+			}
+		}
+		if len(results) > topK { results = results[:topK] }
+	}
+	nodeMap := make(map[string]models.KnowledgeNode)
+	edgeMap := make(map[string]bool)
+	for _, r := range results {
+		nodes, edges, _ := m.kbIndex.QueryRelated(m.ctx, r.Entry.ID)
+		for _, n := range nodes { nodeMap[n.ID] = n }
+		for _, e := range edges {
+			k := e.SourceID + "->" + e.TargetID
+			if !edgeMap[k] { edgeMap[k] = true }
+		}
+	}
+	nodes := make([]models.KnowledgeNode, 0, len(nodeMap))
+	for _, n := range nodeMap { nodes = append(nodes, n) }
+	var edgeList []models.KnowledgeEdge
+	for k := range edgeMap {
+		parts := strings.SplitN(k, "->", 2)
+		if len(parts) == 2 { edgeList = append(edgeList, models.KnowledgeEdge{SourceID: parts[0], TargetID: parts[1]}) }
+	}
+	return nodes, edgeList, nil
+}
+
 // ListEntries 列出知识条目
 func (m *MemoryCore) ListEntries(offset, limit int) ([]models.StructuredEntry, error) {
 	return m.kbIndex.ListEntries(offset, limit)

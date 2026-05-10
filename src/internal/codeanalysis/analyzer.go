@@ -115,7 +115,8 @@ func AnalyzeProject(projectRoot string, saveFn func(string, []models.CodeEntity)
 		}
 
 		if len(entities) > 0 && saveFn != nil {
-			// Normalize to relative path for consistent DB queries
+			// Normalize to forward-slash relative path (cross-platform consistent)
+			relPath = strings.ReplaceAll(relPath, "\\", "/")
 			for i := range entities {
 				entities[i].FilePath = relPath
 			}

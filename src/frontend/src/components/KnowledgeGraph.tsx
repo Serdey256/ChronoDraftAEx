@@ -33,8 +33,8 @@ function KnowledgeGraph() {
     if (!graphQuery.trim()) return
     setGraphLoading(true)
     try {
-      const result = await (Call as any).ByName('main.ChronoService.GetGraphData', graphQuery, graphTopK, 'true')
-      const data = typeof result === 'string' ? JSON.parse(result) : result
+      const result = await (Call as any).ByName('main.ChronoService.SearchGraph', graphQuery, graphTopK)
+      const data = result && typeof result === 'object' ? result : (typeof result === 'string' ? JSON.parse(result) : null)
       if (svgRef.current) d3.select(svgRef.current).selectAll('*').remove()
       if (data?.nodes?.length) {
         const nodes: SimNode[] = data.nodes.map((n: any) => ({ id: n.id, label: n.label, type: n.type }))
