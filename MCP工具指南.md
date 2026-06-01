@@ -1,14 +1,14 @@
 # ChronoDraftAEx MCP 工具指南
 
-> 10 个工具，三层记忆架构。Agent 会话开始时读取 AGENTS.md（免费），开发中按需调用以下工具。
+> 10 个工具，三层记忆架构。Agent 会话开始时建议先调用 `get_snapshot()` 获取项目快照，开发中按需调用以下工具。
 
 ---
 
 ## 初始化（首次使用，执行一次）
 
-### `index_project()`
+### `scaffold_project()`
 
-扫描项目文件结构，AST 分析所有源文件，安装 Git Hook。
+扫描项目结构，构建目录层级图谱，导入 Git 历史。零 AI 调用，轻量快速。
 
 ```
 无参数。首次接入项目时调用一次即可。
@@ -108,7 +108,7 @@ get_graph(query="用户模块", top_k=5, compact="true")
 
 ### `get_snapshot()`
 
-获取当前 AGENTS.md 内容（项目全局快照）。
+获取当前项目知识快照（Markdown，通过 MCP 返回，不写入文件）。
 
 ```
 无参数。返回 Markdown，≤1500 tokens。
@@ -154,7 +154,7 @@ list_entries(limit=5, compact="true")
 ## 最佳实践
 
 ```
-会话开始 ──→ 读取 AGENTS.md（IDE 自动，0 token）
+会话开始 ──→ get_snapshot()
 修改文件前 ──→ get_context(files="...")
 修改完成后 ──→ record_change(what, why, problem, files, tags)
 搜索历史 ──→ search_knowledge(query="关键词")

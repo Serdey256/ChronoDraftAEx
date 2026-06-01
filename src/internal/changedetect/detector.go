@@ -5,6 +5,7 @@ package changedetect
 import (
 	"ChronoDraftAEx/pkg/models"
 	"ChronoDraftAEx/pkg/utils"
+	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -16,8 +17,9 @@ import (
 
 // Detector 文件变动检测器
 type Detector struct {
-	projectRoot string
-	ignoreList  []string
+	projectRoot       string
+	ignoreList        []string
+	gitignorePatterns []string
 }
 
 // FileSnapshot 记录文件在某个时间点的元信息
@@ -32,7 +34,7 @@ var ignoreExtensions = []string{".class", ".pyc", ".pyo", ".o", ".so", ".dll", "
 
 // NewDetector 创建一个变动检测器
 func NewDetector(projectRoot string) *Detector {
-	return &Detector{
+	d := &Detector{
 		projectRoot: projectRoot,
 		ignoreList: []string{
 			".git", ".chronodraft", "node_modules", "vendor",
@@ -42,6 +44,8 @@ func NewDetector(projectRoot string) *Detector {
 			".DS_Store", "Thumbs.db", "*.log",
 		},
 	}
+	d.loadGitignore()
+	return d
 }
 
 // SetIgnoreList 自定义忽略目录列表
@@ -56,7 +60,54 @@ func (d *Detector) shouldIgnore(path string) bool {
 			return true
 		}
 	}
+	for _, pattern := range d.gitignorePatterns {
+		if matchGitignorePattern(pattern, path) {
+			return true
+		}
+	}
 	return false
+}
+
+// loadGitignore 读取项目根目录的 .gitignore 文件，解析忽略规则
+func (d *Detector) loadGitignore() {
+	f, err := os.Open(filepath.Join(d.projectRoot, ".gitignore"))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		d.gitignorePatterns = append(d.gitignorePatterns, line)
+	}
+}
+
+// matchGitignorePattern 简易 .gitignore 模式匹配
+func matchGitignorePattern(pattern, path string) bool {
+	// Handle negations: !pattern (exclude from ignore — simplified: skip negations)
+	if strings.HasPrefix(pattern, "!") {
+		return false
+	}
+	// Exact directory match: "dirname/"
+	if strings.HasSuffix(pattern, "/") {
+		dir := strings.TrimSuffix(pattern, "/")
+		return strings.Contains(path, "/"+dir+"/") || strings.HasPrefix(path, dir+"/") || path == dir
+	}
+	// Wildcard: "*.ext"
+	if strings.HasPrefix(pattern, "*.") {
+		ext := pattern[1:] // ".ext"
+		return strings.HasSuffix(path, ext)
+	}
+	// Prefix match: "prefix*"
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix)
+	}
+	// Exact file/dir match
+	return strings.Contains(path, "/"+pattern) || strings.HasPrefix(path, pattern+"/") || path == pattern
 }
 
 func (d *Detector) shouldIgnoreByExtension(path string) bool {

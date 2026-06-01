@@ -18,7 +18,7 @@ func GenerateAgentsMarkdown(results []models.SearchResult) string {
 		md += "- `get_graph` — 获取知识图谱\n"
 		md += "- `get_project_structure` — 获取项目文件结构\n"
 		md += "- `list_entries` — 列出知识条目\n"
-		md += "- `index_project` — 全量索引项目（首次接入时使用）\n\n"
+		md += "- `scaffold_project` — 构建项目脚手架（零AI成本，首次接入时使用）\n\n"
 		md += "### 💡 使用提示\n\n"
 		md += "Agent 完成代码修改后，请调用 `record_change` 告知 ChronoDraftAEx：\n"
 		md += "```\n"

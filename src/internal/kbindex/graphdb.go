@@ -309,6 +309,232 @@ func (g *GraphDB) UpdateFileStructure(ctx context.Context, dirs, files map[strin
 	return tx.Commit()
 }
 
+// UpdateDirectoryHierarchy 从文件路径列表构建目录层级图
+// 自动推导所有中间目录节点，创建 dir: 节点 + CONTAINS 边
+func (g *GraphDB) UpdateDirectoryHierarchy(ctx context.Context, filePaths []string) error {
+	tx, err := g.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	dirSet := make(map[string]bool)
+	seenDirEdge := make(map[string]bool)
+
+	for _, fp := range filePaths {
+		fp = filepath.ToSlash(fp)
+
+		// Create file node
+		fileID := "file:" + fp
+		_, err = tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO nodes (id, label, type) VALUES (?, ?, ?)`,
+			fileID, fp, "file",
+		)
+		if err != nil {
+			return fmt.Errorf("insert file node %s: %w", fp, err)
+		}
+
+		// Walk up the directory tree, creating dir nodes and CONTAINS edges
+		dir := filepath.Dir(fp)
+		for dir != "" && dir != "." {
+			dirID := "dir:" + dir
+			if !dirSet[dir] {
+				dirSet[dir] = true
+				_, err = tx.ExecContext(ctx,
+					`INSERT OR IGNORE INTO nodes (id, label, type) VALUES (?, ?, ?)`,
+					dirID, dir, "directory",
+				)
+				if err != nil {
+					return fmt.Errorf("insert dir node %s: %w", dir, err)
+				}
+
+				// Create CONTAINS edge from parent dir to this dir
+				parent := filepath.Dir(dir)
+				if parent != "" && parent != "." {
+					parentID := "dir:" + parent
+					edgeKey := parentID + "->" + dirID
+					if !seenDirEdge[edgeKey] {
+						seenDirEdge[edgeKey] = true
+						_, err = tx.ExecContext(ctx,
+							`INSERT OR IGNORE INTO edges (source_id, target_id, relation) VALUES (?, ?, ?)`,
+							parentID, dirID, "CONTAINS",
+						)
+						if err != nil {
+							return fmt.Errorf("insert dir contains edge %s->%s: %w", parent, dir, err)
+						}
+					}
+				}
+			}
+
+			// Create CONTAINS edge from immediate parent dir to this file
+			edgeKey := dirID + "->" + fileID
+			if !seenDirEdge[edgeKey] {
+				seenDirEdge[edgeKey] = true
+				_, err = tx.ExecContext(ctx,
+					`INSERT OR IGNORE INTO edges (source_id, target_id, relation) VALUES (?, ?, ?)`,
+					dirID, fileID, "CONTAINS",
+				)
+				if err != nil {
+					return fmt.Errorf("insert file contains edge %s->%s: %w", dir, fp, err)
+				}
+			}
+
+			break // Only link file to its immediate parent directory
+		}
+
+		// Root-level file: no CONTAINS from directory, link directly
+	}
+	return tx.Commit()
+}
+
+// UpdateImportEdges 批量创建文件间的 IMPORTS 边
+// imports: map[sourceFilePath][]importedFilePath
+func (g *GraphDB) UpdateImportEdges(ctx context.Context, imports map[string][]string) error {
+	tx, err := g.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for sourceFile, importedList := range imports {
+		sourceFile = filepath.ToSlash(sourceFile)
+		sourceID := "file:" + sourceFile
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM edges WHERE source_id = ? AND relation = 'IMPORTS'`,
+			sourceID,
+		); err != nil {
+			return fmt.Errorf("delete IMPORTS edges for %s: %w", sourceFile, err)
+		}
+		for _, importedFile := range importedList {
+			importedFile = filepath.ToSlash(importedFile)
+			targetID := "file:" + importedFile
+			_, err = tx.ExecContext(ctx,
+				`INSERT OR IGNORE INTO edges (source_id, target_id, relation) VALUES (?, ?, ?)`,
+				sourceID, targetID, "IMPORTS",
+			)
+			if err != nil {
+				return fmt.Errorf("insert IMPORTS edge %s->%s: %w", sourceFile, importedFile, err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// SearchNodesByLabel 按标签模糊搜索图节点
+func (g *GraphDB) SearchNodesByLabel(ctx context.Context, query string, limit int) ([]models.KnowledgeNode, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := g.db.QueryContext(ctx,
+		`SELECT id, label, type, metadata
+		 FROM nodes
+		 WHERE LOWER(label) LIKE '%' || LOWER(?) || '%'
+		 ORDER BY LENGTH(label) ASC, created_at DESC
+		 LIMIT ?`,
+		query, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []models.KnowledgeNode
+	for rows.Next() {
+		var node models.KnowledgeNode
+		var metaJSON sql.NullString
+		if err := rows.Scan(&node.ID, &node.Label, &node.Type, &metaJSON); err != nil {
+			continue
+		}
+		if metaJSON.Valid {
+			_ = json.Unmarshal([]byte(metaJSON.String), &node.Metadata)
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, rows.Err()
+}
+
+// GetModuleGraph 查询指定目录前缀下的子图（含层级关系和相关 Entry）
+func (g *GraphDB) GetModuleGraph(ctx context.Context, dirPath string, limit int) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	dirPath = filepath.ToSlash(dirPath)
+
+	// Collect node IDs in the module: all nodes reachable via CONTAINS from the dir node
+	moduleNodeIDs := make(map[string]bool)
+
+	// Start with the directory itself
+	dirID := "dir:" + dirPath
+	moduleNodeIDs[dirID] = true
+
+	// BFS through CONTAINS edges (2 levels: dir → subdir → file)
+	for depth := 0; depth < 3; depth++ {
+		var currentIDs []string
+		for id := range moduleNodeIDs {
+			currentIDs = append(currentIDs, id)
+		}
+		// Query all children via CONTAINS from current set
+		for _, cid := range currentIDs {
+			rows, err := g.db.QueryContext(ctx,
+				`SELECT target_id FROM edges WHERE source_id = ? AND relation = 'CONTAINS' LIMIT ?`,
+				cid, limit,
+			)
+			if err != nil {
+				continue
+			}
+			for rows.Next() {
+				var tid string
+				if rows.Scan(&tid) == nil {
+					moduleNodeIDs[tid] = true
+				}
+			}
+			rows.Close()
+		}
+		if len(moduleNodeIDs) > limit {
+			break
+		}
+	}
+
+	// Fetch nodes
+	var nodes []models.KnowledgeNode
+	for id := range moduleNodeIDs {
+		row := g.db.QueryRowContext(ctx,
+			`SELECT id, label, type, metadata FROM nodes WHERE id = ?`, id,
+		)
+		var node models.KnowledgeNode
+		var metaJSON sql.NullString
+		if row.Scan(&node.ID, &node.Label, &node.Type, &metaJSON) == nil {
+			if metaJSON.Valid {
+				json.Unmarshal([]byte(metaJSON.String), &node.Metadata)
+			}
+			nodes = append(nodes, node)
+		}
+	}
+
+	// Fetch edges between collected nodes
+	var edges []models.KnowledgeEdge
+	for id := range moduleNodeIDs {
+		rows, err := g.db.QueryContext(ctx,
+			`SELECT source_id, target_id, relation FROM edges WHERE source_id = ? OR target_id = ?`,
+			id, id,
+		)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var edge models.KnowledgeEdge
+			if rows.Scan(&edge.SourceID, &edge.TargetID, &edge.Relation) == nil {
+				if moduleNodeIDs[edge.SourceID] && moduleNodeIDs[edge.TargetID] {
+					edges = append(edges, edge)
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	return nodes, edges, nil
+}
+
 // Close 关闭图数据库连接
 func (g *GraphDB) Close() error {
 	return g.db.Close()

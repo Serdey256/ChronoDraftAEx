@@ -61,7 +61,7 @@ func (s *StdioServer) registerTools(srv *mcpserver.MCPServer) {
 	// 2. get_snapshot
 	srv.AddTool(
 		mcpgo.NewTool("get_snapshot",
-			mcpgo.WithDescription("获取项目知识快照（AGENTS.md 格式）"),
+			mcpgo.WithDescription("获取项目知识快照（Markdown 格式，通过 MCP 返回，不写入文件）"),
 		),
 		s.handleGetSnapshot,
 	)
@@ -101,10 +101,18 @@ func (s *StdioServer) registerTools(srv *mcpserver.MCPServer) {
 		s.handleRecordChange,
 	)
 
-	// 6. index_project
+	// 6. scaffold_project (new primary name)
+	srv.AddTool(
+		mcpgo.NewTool("scaffold_project",
+			mcpgo.WithDescription("构建项目脚手架：扫描项目结构，构建目录层级图谱，导入 git 历史。零 AI 调用，快速轻量。"),
+		),
+		s.handleIndexProject,
+	)
+
+	// 6b. index_project (legacy alias, same handler)
 	srv.AddTool(
 		mcpgo.NewTool("index_project",
-			mcpgo.WithDescription("扫描项目文件结构，为关键文件生成作用描述，构建知识图谱。首次接入项目时使用。"),
+			mcpgo.WithDescription("(已废弃，请使用 scaffold_project) 扫描项目文件结构构建知识图谱"),
 		),
 		s.handleIndexProject,
 	)
@@ -237,50 +245,9 @@ func (s *StdioServer) handleGetGraph(ctx context.Context, req mcpgo.CallToolRequ
 	}
 	compact := strings.ToLower(req.GetString("compact", "")) == "true"
 
-	// Search entries matching the query
-	results, err := s.core.SearchKnowledge(query, topK)
-	// Fallback: text search on entries
-	if err != nil || len(results) == 0 {
-		entries, _ := s.core.ListEntries(0, 50)
-		for _, e := range entries {
-			if strings.Contains(strings.ToLower(e.Summary), strings.ToLower(query)) ||
-				strings.Contains(strings.ToLower(e.DesignDecision), strings.ToLower(query)) {
-				results = append(results, models.SearchResult{Entry: e, Score: 0.5})
-			}
-		}
-		if len(results) > topK {
-			results = results[:topK]
-		}
-	}
-
-	// Build subgraph from matching entries + their related nodes
-	nodeMap := make(map[string]models.KnowledgeNode)
-	edgeMap := make(map[string]bool)
-	for _, r := range results {
-		nodes, edges, err := s.core.GetRelatedNodes(r.Entry.ID)
-		if err == nil {
-			for _, n := range nodes {
-				nodeMap[n.ID] = n
-			}
-			for _, e := range edges {
-				key := e.SourceID + "->" + e.TargetID
-				if !edgeMap[key] {
-					edgeMap[key] = true
-				}
-			}
-		}
-	}
-
-	nodes := make([]models.KnowledgeNode, 0, len(nodeMap))
-	for _, n := range nodeMap {
-		nodes = append(nodes, n)
-	}
-	edges := make([]models.KnowledgeEdge, 0)
-	for k := range edgeMap {
-		parts := strings.SplitN(k, "->", 2)
-		if len(parts) == 2 {
-			edges = append(edges, models.KnowledgeEdge{SourceID: parts[0], TargetID: parts[1]})
-		}
+	nodes, edges, err := s.core.SearchGraph(query, topK)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("图谱搜索失败: %v", err)), nil
 	}
 
 	var data []byte
@@ -385,8 +352,6 @@ func (s *StdioServer) handleRecordChange(ctx context.Context, req mcpgo.CallTool
 		return mcpgo.NewToolResultError(fmt.Sprintf("索引失败: %v", err)), nil
 	}
 
-	_ = s.core.RefreshAgentsMD()
-
 	// 增量 AST 分析涉及的变更文件
 	if files != "" {
 		for _, f := range strings.Split(files, ",") {
@@ -470,11 +435,6 @@ func (s *StdioServer) handleCaptureCommit(ctx context.Context, req mcpgo.CallToo
 				}
 			}
 		}
-	}
-
-	// 触发 AGENTS.md 重新生成
-	if err := s.core.RefreshAgentsMD(); err != nil {
-		log.Printf("刷新 AGENTS.md 失败: %v", err)
 	}
 
 	// 返回保存的 commit 记录 JSON

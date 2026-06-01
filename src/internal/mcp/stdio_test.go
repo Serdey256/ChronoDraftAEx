@@ -3,6 +3,9 @@ package mcp
 import (
 	"ChronoDraftAEx/internal/memorycore"
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -179,6 +182,66 @@ func TestRecordChangeMissingParams(t *testing.T) {
 	}
 }
 
+func TestGetContextUsesImportedCommitFiles(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeFile(t, filepath.Join(projectRoot, "main.go"), "package main\nfunc main() {}\n")
+	gitRun(t, projectRoot, "init")
+	gitRun(t, projectRoot, "config", "user.email", "test@example.com")
+	gitRun(t, projectRoot, "config", "user.name", "ChronoDraft Test")
+	gitRun(t, projectRoot, "add", ".")
+	gitRun(t, projectRoot, "commit", "-m", "init")
+
+	core, err := memorycore.NewMemoryCore(projectRoot, "", "", "")
+	if err != nil {
+		t.Fatalf("创建测试 MemoryCore 失败: %v", err)
+	}
+	t.Cleanup(func() { core.Close() })
+	if err := core.ImportGitHistory(10); err != nil {
+		t.Fatalf("ImportGitHistory failed: %v", err)
+	}
+
+	srv := NewStdioServer(core, projectRoot)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{"files": "main.go"}
+
+	result, err := srv.handleGetContext(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	text := getContentText(result)
+	if !strings.Contains(text, "init") {
+		t.Fatalf("expected imported commit message in context, got: %s", text)
+	}
+}
+
+func TestGetGraphReturnsStructureGraphForDirectoryQuery(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeFile(t, filepath.Join(projectRoot, "src", "util.ts"), "export const answer = 42\n")
+	writeFile(t, filepath.Join(projectRoot, "src", "main.ts"), "import { answer } from './util'\nconsole.log(answer)\n")
+
+	core, err := memorycore.NewMemoryCore(projectRoot, "", "", "")
+	if err != nil {
+		t.Fatalf("创建测试 MemoryCore 失败: %v", err)
+	}
+	t.Cleanup(func() { core.Close() })
+	if _, err := core.ScaffoldProject(); err != nil {
+		t.Fatalf("ScaffoldProject failed: %v", err)
+	}
+
+	srv := NewStdioServer(core, projectRoot)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{"query": "src", "top_k": 5.0}
+
+	result, err := srv.handleGetGraph(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	text := getContentText(result)
+	if !strings.Contains(text, "dir:src") || !strings.Contains(text, "IMPORTS") {
+		t.Fatalf("expected structure graph with IMPORTS relation, got: %s", text)
+	}
+}
+
 func getContentText(result *mcpgo.CallToolResult) string {
 	for _, c := range result.Content {
 		if tc, ok := c.(mcpgo.TextContent); ok {
@@ -186,4 +249,24 @@ func getContentText(result *mcpgo.CallToolResult) string {
 		}
 	}
 	return ""
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
 }

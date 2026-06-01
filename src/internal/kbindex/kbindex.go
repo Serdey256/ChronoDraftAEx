@@ -172,3 +172,23 @@ func (k *KBIndex) Close() error {
 	_ = k.metaDB.Close()
 	return nil
 }
+
+// UpdateDirectoryHierarchy 从文件路径列表构建目录层级图
+func (k *KBIndex) UpdateDirectoryHierarchy(ctx context.Context, filePaths []string) error {
+	return k.graphDB.UpdateDirectoryHierarchy(ctx, filePaths)
+}
+
+// UpdateImportEdges 批量创建文件间的 IMPORTS 边
+func (k *KBIndex) UpdateImportEdges(ctx context.Context, imports map[string][]string) error {
+	return k.graphDB.UpdateImportEdges(ctx, imports)
+}
+
+// GetModuleGraph 查询指定目录下的子图
+func (k *KBIndex) GetModuleGraph(ctx context.Context, dirPath string, limit int) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	return k.graphDB.GetModuleGraph(ctx, dirPath, limit)
+}
+
+// SearchNodesByLabel 按标签模糊搜索图节点
+func (k *KBIndex) SearchNodesByLabel(ctx context.Context, query string, limit int) ([]models.KnowledgeNode, error) {
+	return k.graphDB.SearchNodesByLabel(ctx, query, limit)
+}

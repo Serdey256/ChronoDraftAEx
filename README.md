@@ -1,226 +1,171 @@
 # ChronoDraftAEx
 
-> AI 编码时代的「第二大脑」— 将每一次 Agent 对话转化为可索引、可追溯、可重用的工程资产
+> AI 编码时代的「第二大脑」——把 Agent 开发过程中的设计决策、变更脉络和可复用上下文沉淀为项目资产。
 
-## 💡 产品定位
+## 产品定位
 
-### 核心痛点
+ChronoDraftAEx 的核心不是“让 AI 总结整个代码库”，而是：
 
-AI 代理进行多轮开发时，上下文窗口爆满、项目记忆丢失是致命问题。传统方案（纯文档、手动记录、Agent 自行记忆）的困境：
+- 记住为什么这样改
+- 把最近的真实变更接到当前上下文里
+- 让后续 Agent 能沿着文件、提交、决策继续工作
 
-| 痛点 | 根因 | ChronoDraftAEx 解法 |
-|:---|:---|:---|
-| 上下文窗口爆满 | 每轮对话都从头加载全部历史 | **三层记忆架构**：热-温-冷记忆分级，按需注入 |
-| 项目记忆丢失 | 记忆仅存在于单次对话中 | **Git Hook 自动捕获**每次 commit + **AGENTS.md 持久化** |
-| 改动文档混乱 | 变更记录零散、无结构 | **结构化知识条目**：what/why/problem + 向量语义索引 |
-| 知识无法检索 | 只能 grep 文件名或关键词 | **嵌入向量语义搜索** + **知识图谱关系推理** |
+这次更新后，项目初始化从“全量 AI 索引”调整为“项目脚手架”模式，避免在大项目上变成负担。
 
-### 可索引 · 可追溯 · 可重用
+## 这次更新
 
-ChronoDraftAEx 的核心理念是将 AI 编码过程中产生的每一次决策、每一处变更，转化为工程资产：
+### 从全量索引改为脚手架
 
-- **可索引**：每一笔变更通过向量嵌入索引到语义空间，支持自然语言搜索（如"JWT 认证相关的修改"）
-- **可追溯**：从一条知识条目可沿知识图谱追溯关联文件、标签、后续修改，还原完整设计决策链
-- **可重用**：AGENTS.md 作为项目知识快照，新 Agent 只需读取这份文件即可快速理解项目架构和历史决策
+首次接入项目时，推荐调用：
 
-
-## 🏗️ 架构
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  Agent 上下文窗口                     │
-├─────────────────────────────────────────────────────┤
-│  Layer 1: AGENTS.md（免费加载）                       │
-│  项目概览 · 关键设计决策 · 最近动态 · 项目结构 · 可用工具 │
-├─────────────────────────────────────────────────────┤
-│  Layer 2: get_context / get_code_entities（按需）    │
-│  文件变更历史 · 代码实体 · 关联文件 · 相关决策           │
-├─────────────────────────────────────────────────────┤
-│  Layer 3: search_knowledge / get_graph（深度查询）    │
-│  SQLite + 向量语义搜索 + 图关系推理                   │
-└─────────────────────────────────────────────────────┘
+```text
+scaffold_project()
 ```
 
-## ⚙️ 技术栈
+它现在只做这些事：
+
+1. 扫描项目文件结构
+2. 构建目录/文件层级图
+3. 预计算代码 AST 实体
+4. 导入最近 Git 历史
+5. 让 Agent 之后可通过 `get_snapshot()` 获取项目快照
+
+特点：
+
+- 零 AI 调用
+- 适合大项目
+- 不尝试“总结整个代码库”
+- 让后续知识通过 `record_change` 和 Git 增量积累
+
+兼容性说明：
+
+- `index_project()` 仍可调用
+- 但现在它只是 `scaffold_project()` 的兼容别名
+
+### 知识图谱改为分层结构
+
+图谱现在优先表达：
+
+- 目录
+- 文件
+- 知识条目
+- 标签
+
+前端图谱支持目录节点折叠/展开，避免大项目图谱坍缩为一个中心团块。
+
+### 尊重 `.gitignore`
+
+脚手架扫描和 AST 分析会自动跳过 `.gitignore` 中的路径，减少无意义数据进入图谱。
+
+### Git 历史只导入元数据
+
+初始化时导入最近 commit 的元数据，但**不会**回头对历史版本重做整库 AST。
+后续 AST 由 Git Hook 和增量更新维护。
+
+## 三层记忆架构
+
+```text
+Layer 1: get_snapshot()
+  项目概览、最近动态、关键决策、结构快照（通过 MCP 获取，不落盘写文件）
+
+Layer 2: get_context / get_code_entities
+  文件级上下文、代码实体、关联文件、相关决策
+
+Layer 3: search_knowledge / get_graph
+  语义搜索、关系图谱、知识追溯
+```
+
+## 技术栈
 
 | 层级 | 技术 | 说明 |
 |:---|:---|:---|
 | 桌面框架 | Wails v3 | 跨平台 GUI |
 | 后端 | Go | 单二进制、零 CGO |
-| 前端 | React + TypeScript + D3.js | 仪表盘 + 知识图谱可视化 |
-| AI | OpenAI 兼容 API | 支持 DeepSeek 等 |
-| 存储 | SQLite | 元数据 + 向量 + 图，三库分立 |
-| MCP | mark3labs/mcp-go | stdio 传输 |
+| 前端 | React + TypeScript + D3.js | 仪表盘 + 图谱可视化 |
+| 存储 | SQLite | metadata + vector + graph |
+| MCP | mark3labs/mcp-go | stdio 通信 |
 
-## 🚀 快速开始
+## 快速开始
 
 ### 构建
 
 ```bash
 cd src
-go build -o chronodraft-mcp.exe ./cmd/mcp    # MCP 独立二进制
-wails3 dev                                      # GUI 桌面应用（开发模式）
+go build -o chronodraft-mcp.exe ./cmd/mcp
+wails3 dev
 ```
 
 ### 环境变量
 
 | 变量 | 说明 | 默认值 |
 |:---|:---|:---|
-| `CHRONODRAFT_AI_KEY` | AI API Key | 必须设置 |
+| `CHRONODRAFT_AI_KEY` | AI API Key | 必填（仅 AI 功能需要） |
 | `CHRONODRAFT_AI_BASE` | API Base URL | `https://api.openai.com/v1` |
 | `CHRONODRAFT_AI_MODEL` | 对话模型 | `gpt-4o` |
 | `CHRONODRAFT_EMBEDDING_MODEL` | 嵌入模型 | `text-embedding-3-small` |
-| `CHRONODRAFT_PROJECT_ROOT` | 被监控的项目根目录 | 当前工作目录 |
-| `CHRONODRAFT_BINARY_PATH` | chronodraft-mcp.exe 绝对路径（Git Hook 用） | 空=跳过 Hook |
+| `CHRONODRAFT_PROJECT_ROOT` | 被监控项目根目录 | 当前工作目录 |
+| `CHRONODRAFT_BINARY_PATH` | MCP 二进制路径（Git Hook 用） | 空=跳过 Hook |
 
-在项目根目录的 `opencode.json` 中配置：
-### DeepSeek 用户配置示例
+## MCP 工具工作流
 
-```json
-{
-  "mcp": {
-    "chronodraft": {
-      "type": "local",
-      "command": ["F:\\path\\to\\chronodraft-mcp.exe"],
-      "enabled": true,
-      "environment": {
-        "CHRONODRAFT_PROJECT_ROOT": "F:\\path\\to\\your\\project",
-        "CHRONODRAFT_AI_KEY": "sk-...",
-        "CHRONODRAFT_AI_BASE": "https://api.deepseek.com/v1",
-        "CHRONODRAFT_AI_MODEL": "deepseek-chat",
-        "CHRONODRAFT_EMBEDDING_MODEL": "deepseek-chat"
-      }
-    }
-  }
-}
+### 初始化
+
+```text
+scaffold_project()
+→ 扫描项目结构
+→ 构建目录层级图谱
+→ AST 预计算
+→ 导入最近 50 条 Git 提交
+→ 后续可通过 get_snapshot() 获取项目快照
 ```
 
-> ⚠️ `CHRONODRAFT_PROJECT_ROOT` 指向**被开发的项目**，不是 ChronoDraftAEx 自身。
+### 日常开发
 
----
-
-## 📡 Agent 使用指南（MCP 工具）
-
-### 初始化（每个项目首次使用执行一次）
-
-```
-index_project()
-→ 扫描项目文件结构
-→ AST 分析所有 Go/TS/Java/Python/Vue 等源文件
-→ 安装 Git Hook（如已配置 CHRONODRAFT_BINARY_PATH）
-→ 生成初始 AGENTS.md
-```
-
-### 日常开发核心流程
-
-```
+```text
 1. Agent 修改代码
-2. git commit（Hook 自动捕获 commit + AST 增量更新）
-3. Agent 调用 record_change 记录设计决策
-   record_change(
-     what:  "添加了用户认证模块",
-     why:   "选用 JWT 替代 Session，支持无状态横向扩展",
-     problem: "原系统无认证，管理员页面暴露",
-     files: "src/auth/login.ts,src/middleware/jwt.ts",
-     tags:  "认证,JWT,安全"
-   )
-→ ChronoDraftAEx: 索引条目 + 刷新 AGENTS.md + 更新向量语义索引
+2. git commit（Hook 自动捕获 commit + 增量更新 AST）
+3. Agent 调用 record_change 记录 why / problem / files / tags
+4. ChronoDraftAEx 刷新知识条目，Agent 需要时调用 get_snapshot()
 ```
 
-### 完整 MCP 工具清单（10 个）
+### 核心工具
 
-| 工具 | 说明 | 关键参数 | Token 成本 |
-|:---|:---|:---|:--:|
-| `record_change` | 记录设计决策（**核心**） | `what`, `why`, `problem`(必填), `files`, `tags` | ~100 |
-| `get_context` | 获取文件级任务上下文 | `files`(必填, 逗号分隔, ≤3个) | ≤1500 |
-| `get_code_entities` | 获取文件 AST 实体 | `files`(必填, 逗号分隔) | ≤500 |
-| `search_knowledge` | 语义搜索历史决策 | `query`(必填), `top_k`(默认10) | ≤1000 |
-| `get_graph` | 查询关联图谱 | `query`(必填), `top_k`(默认5, 最大20) | ≤1500 |
-| `get_snapshot` | 获取 AGENTS.md 内容 | — | ≤1500 |
-| `list_entries` | 分页列出条目 | `offset`(默认0), `limit`(默认20), `compact` | ≤1000 |
-| `index_project` | 全量扫描 + AST | — | 0（后台） |
-| `capture_commit` | 手动捕获 commit | `hash`, `message`(必填) | 0 |
-| `get_project_structure` | 项目文件结构 | — | ≤1000 |
+| 工具 | 说明 |
+|:---|:---|
+| `scaffold_project` | 初始化项目脚手架（零 AI） |
+| `record_change` | 记录设计决策，是最重要的高层入口 |
+| `get_context` | 获取文件级上下文 |
+| `get_code_entities` | 获取 AST 实体 |
+| `search_knowledge` | 搜索历史决策 |
+| `get_graph` | 查询关联图谱 |
+| `get_snapshot` | 获取当前项目知识快照（Markdown，经 MCP 返回） |
+| `list_entries` | 浏览知识条目 |
+| `capture_commit` | 手动记录提交 |
+| `get_project_structure` | 获取项目结构 |
 
-### Agent 最佳实践
-
-```
-会话开始:
-  → 读取 AGENTS.md（IDE 自动，0 token 成本）
-    → 了解项目概况、最近变更、可用工具
-
-修改文件前:
-  → get_context(files="目标文件.vue")
-    → 获取它的变更历史、代码结构、关联文件
-
-记录决策:
-  → record_change(what="...", why="...", problem="...", files="...", tags="...")
-    → 让后续 Agent 理解"为什么这么改"
-
-搜索历史:
-  → search_knowledge(query="JWT认证")
-    → 查找相关设计决策
-
-图谱关联:
-  → get_graph(query="用户模块", top_k=5)
-    → 查看与用户模块关联的文件和决策节点
-```
-
-### ⚠️ 重要提示
-
-1. **AGENTS.md 是免费记忆**——IDE 自动加载，不消耗 Agent 上下文预算。确保它启用（GUI 仪表盘可切换）
-2. **record_change 是唯一的高层知识入口**——代码变更可以自动捕获（Git Hook + AST），但"为什么改"只有 Agent 知道
-3. **search_knowledge 需要数据**——必须先有 record_change 调用，才有数据可搜
-4. **token 预算可控**——可在 GUI 前端禁用 AGENTS.md 自动生成以节省 token
-
----
-
-## 🖥️ GUI 桌面应用
-
-启动 `wails3 dev` 后，桌面窗口提供：
+## GUI 页面
 
 | 页面 | 功能 |
 |:---|:---|
-| 📊 仪表盘 | 知识条目统计、搜索、全量索引进度条 |
-| 🧬 代码结构 | AST 提取的函数/类型/导入，AI 语义标注开关 |
-| 🕸️ 知识图谱 | 关键词查询 + top_k 关联子图 |
-| 📸 项目快照 | 快照管理 |
-| 📁 项目管理 | 添加/切换被监控项目 |
+| 仪表盘 | 搜索、条目浏览、项目脚手架进度 |
+| 代码结构 | AST 实体查看 |
+| 知识图谱 | 目录/文件/条目关系图，可折叠目录节点 |
+| 项目快照 | 快照管理 |
+| 项目管理 | 添加/切换被监控项目 |
 
----
+## 忽略规则
 
-## 🚫 忽略规则
+默认忽略：
 
-| 类型 | 列表 |
-|:---|:---|
-| VCS | `.git` |
-| 数据 | `.chronodraft`, `node_modules`, `vendor` |
-| 构建产物 | `build`, `dist`, `target`, `out`, `bin`, `obj` |
-| 缓存 | `__pycache__`, `.next`, `.nuxt` |
-| IDE | `.idea`, `.vscode`, `.vs` |
-| 扩展名 | `.class`, `.pyc`, `.pyo`, `.o`, `.so`, `.dll`, `.exe`, `.bin` |
+- `.git`
+- `.chronodraft`
+- `node_modules`
+- `vendor`
+- `build` / `dist` / `target` / `out` / `bin` / `obj`
+- `__pycache__` / `.next` / `.nuxt`
 
----
+同时会读取项目根目录的 `.gitignore` 追加忽略规则。
 
-## 📁 项目结构
+## 项目结构
 
-```
-ChronoDraftAEx/src/
-├── cmd/mcp/main.go            # MCP 独立二进制入口
-├── app.go                     # Wails 服务层
-├── internal/
-│   ├── mcp/stdio.go           # MCP 工具注册 + handler（10 个工具）
-│   ├── memorycore/core.go     # 记忆内核（整合层）
-│   ├── kbindex/               # SQLite 知识库（metadata + vector + graph）
-│   ├── codeanalysis/          # 多语言 AST 分析（Go/TS/Java/Python/C++/Rust/C#/Kotlin/JS/Vue）
-│   ├── agentswriter/          # 智能 AGENTS.md 生成器（≤1500 tokens）
-│   ├── githook/               # Git post-commit Hook 自动捕获
-│   ├── changeorganize/        # AI 结构化摘要 + 代码实体语义标注
-│   ├── changedetect/          # 文件变动检测 + 快照
-│   └── config/                # 项目管理配置
-├── pkg/
-│   ├── models/                # 核心数据结构
-│   └── utils/                 # Tokenizer 等工具
-└── frontend/                  # React 前端
-    └── src/components/        # Dashboard, CodeEntities, KnowledgeGraph 等
-```
+参考 [docs/项目结构.md](docs/项目结构.md)。

@@ -54,7 +54,7 @@ export function DetectDependencies(): $CancellablePromise<string[]> {
 }
 
 /**
- * GenerateAgentsMD 前端调用：手动生成 AGENTS.md
+ * GenerateAgentsMD 兼容保留：纯 MCP 快照模式下不再生成文件
  */
 export function GenerateAgentsMD(): $CancellablePromise<void> {
     return $Call.ByID(3215153182);
@@ -86,7 +86,7 @@ export function GetProjectRoot(): $CancellablePromise<string> {
 }
 
 /**
- * IndexProject 前端调用：全量索引项目现有代码
+ * IndexProject 项目脚手架：零AI成本的轻量结构扫描
  */
 export function IndexProject(): $CancellablePromise<models$0.StructuredEntry | null> {
     return $Call.ByID(1981833759).then(($result: any) => {
