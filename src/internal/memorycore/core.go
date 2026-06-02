@@ -287,6 +287,19 @@ func (m *MemoryCore) ListEntries(offset, limit int) ([]models.StructuredEntry, e
 	return m.kbIndex.ListEntries(offset, limit)
 }
 
+// DeleteEntry 删除知识条目，并返回删除前内容用于撤销
+func (m *MemoryCore) DeleteEntry(entryID string) (*models.StructuredEntry, error) {
+	return m.kbIndex.DeleteEntry(m.ctx, entryID)
+}
+
+// RestoreEntry 恢复此前删除的知识条目
+func (m *MemoryCore) RestoreEntry(entry *models.StructuredEntry) error {
+	if entry == nil {
+		return fmt.Errorf("待恢复条目为空")
+	}
+	return m.kbIndex.RestoreEntry(m.ctx, entry)
+}
+
 // CreateSnapshot 创建当前项目快照
 func (m *MemoryCore) CreateSnapshot(version string, dependencies []string) (*models.ProjectSnapshot, error) {
 	snapshot := &models.ProjectSnapshot{

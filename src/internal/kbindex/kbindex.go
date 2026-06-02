@@ -115,6 +115,36 @@ func (k *KBIndex) ListEntries(offset, limit int) ([]models.StructuredEntry, erro
 	return k.metaDB.ListEntries(offset, limit)
 }
 
+// DeleteEntry 从所有索引后端删除知识条目，并返回删除前的完整条目用于撤销
+func (k *KBIndex) DeleteEntry(ctx context.Context, entryID string) (*models.StructuredEntry, error) {
+	entry, err := k.metaDB.GetEntryByID(entryID)
+	if err != nil {
+		return nil, err
+	}
+	rollback := func(cause error) (*models.StructuredEntry, error) {
+		if restoreErr := k.IndexEntry(ctx, entry); restoreErr != nil {
+			return nil, fmt.Errorf("%w; 回滚恢复失败: %v", cause, restoreErr)
+		}
+		return nil, cause
+	}
+
+	if err := k.vectorDB.DeleteEntry(ctx, entryID); err != nil {
+		return nil, err
+	}
+	if err := k.graphDB.DeleteEntry(ctx, entryID); err != nil {
+		return rollback(err)
+	}
+	if err := k.metaDB.DeleteEntry(entryID); err != nil {
+		return rollback(err)
+	}
+	return entry, nil
+}
+
+// RestoreEntry 将删除前的知识条目重新索引到所有后端
+func (k *KBIndex) RestoreEntry(ctx context.Context, entry *models.StructuredEntry) error {
+	return k.IndexEntry(ctx, entry)
+}
+
 // SaveSnapshot 保存项目快照
 func (k *KBIndex) SaveSnapshot(snapshot *models.ProjectSnapshot) error {
 	return k.metaDB.SaveSnapshot(snapshot)

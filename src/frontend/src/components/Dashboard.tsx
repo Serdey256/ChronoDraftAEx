@@ -19,6 +19,9 @@ function Dashboard() {
   const [kbEmpty, setKbEmpty] = useState(false)
   const [indexPhase, setIndexPhase] = useState('')
   const [indexing, setIndexing] = useState(false)
+  const [deletedEntry, setDeletedEntry] = useState<StructuredEntry | null>(null)
+  const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
+  const [restoringEntry, setRestoringEntry] = useState(false)
 
   const search = async (q: string) => {
     setLoading(true)
@@ -69,7 +72,7 @@ function Dashboard() {
     try {
       poll = setInterval(async () => {
         try {
-          const p = await (Call as any).ByName('main.ChronoService.GetIndexPhase')
+          const p = await Call.ByName('main.ChronoService.GetIndexPhase')
           if (p && typeof p === 'string' && p !== '') setIndexPhase(p)
         } catch {}
       }, 500)
@@ -100,6 +103,37 @@ function Dashboard() {
       }
     } catch (e) {
       toast.error('加载当前项目失败: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+
+  const deleteEntry = async (entry: StructuredEntry) => {
+    setDeletingEntryId(entry.id)
+    try {
+      const removed: StructuredEntry | null = await Call.ByName('main.ChronoService.DeleteEntry', entry.id)
+      setEntries(prev => prev.filter(item => item.id !== entry.id))
+      setDeletedEntry(removed ?? entry)
+      setKbEmpty(await IsKnowledgeBaseEmpty())
+      toast.warning('已删除知识条目，可点击撤销删除恢复')
+    } catch (e) {
+      toast.error('删除条目失败: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setDeletingEntryId(null)
+    }
+  }
+
+  const undoDeleteEntry = async () => {
+    if (!deletedEntry) return
+    setRestoringEntry(true)
+    try {
+      await Call.ByName('main.ChronoService.RestoreEntry', deletedEntry)
+      setDeletedEntry(null)
+      setKbEmpty(false)
+      await search(query)
+      toast.success('已恢复知识条目')
+    } catch (e) {
+      toast.error('撤销删除失败: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setRestoringEntry(false)
     }
   }
 
@@ -192,14 +226,34 @@ function Dashboard() {
           </button>
         </div>
         <div className="entry-list">
+          {deletedEntry && (
+            <div className="undo-delete-banner">
+              <span>已删除“{deletedEntry.summary}”</span>
+              <button className="btn btn-secondary" onClick={undoDeleteEntry} disabled={restoringEntry}>
+                {restoringEntry ? '恢复中...' : '撤销删除'}
+              </button>
+            </div>
+          )}
           {entries.map(entry => (
             <div className="entry-item" key={entry.id}>
-              <div className="entry-meta">
-                <span>{new Date(entry.timestamp).toLocaleString()}</span>
-                <span>·</span>
-                <span>Session: {entry.session_id}</span>
+              <div className="entry-header">
+                <div>
+                  <div className="entry-meta">
+                    <span>{new Date(entry.timestamp).toLocaleString()}</span>
+                    <span>·</span>
+                    <span>Session: {entry.session_id}</span>
+                  </div>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>{entry.summary}</h4>
+                </div>
+                <button
+                  className="entry-delete-btn"
+                  onClick={() => deleteEntry(entry)}
+                  disabled={deletingEntryId === entry.id || restoringEntry}
+                  aria-label={`删除知识条目：${entry.summary}`}
+                >
+                  {deletingEntryId === entry.id ? '删除中...' : '删除'}
+                </button>
               </div>
-              <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>{entry.summary}</h4>
               <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 6 }}>
                 <strong>设计决策：</strong>{entry.design_decision}
               </p>

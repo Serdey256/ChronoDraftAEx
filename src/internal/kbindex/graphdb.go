@@ -144,6 +144,25 @@ func (g *GraphDB) InsertEntry(ctx context.Context, entry *models.StructuredEntry
 	return tx.Commit()
 }
 
+// DeleteEntry 删除指定知识条目节点以及所有关联边
+func (g *GraphDB) DeleteEntry(ctx context.Context, entryID string) error {
+	tx, err := g.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM edges WHERE source_id = ? OR target_id = ?`, entryID, entryID); err != nil {
+		return fmt.Errorf("删除条目关系边失败: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id = ? AND type = 'entry'`, entryID); err != nil {
+		return fmt.Errorf("删除条目节点失败: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // QueryRelated 查询与指定条目相关的知识节点
 func (g *GraphDB) QueryRelated(ctx context.Context, entryID string) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
 	// 查询直接关联的节点

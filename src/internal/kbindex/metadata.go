@@ -112,6 +112,11 @@ func (m *MetadataStore) SaveEntry(entry *models.StructuredEntry) error {
 		return fmt.Errorf("插入条目失败: %w", err)
 	}
 
+	_, err = tx.Exec(`DELETE FROM file_changes WHERE entry_id = ?`, entry.ID)
+	if err != nil {
+		return fmt.Errorf("清理旧文件变更记录失败: %w", err)
+	}
+
 	for _, fc := range entry.AffectedFiles {
 		_, err = tx.Exec(
 			`INSERT INTO file_changes (entry_id, path, change_type, diff) VALUES (?, ?, ?, ?)`,
@@ -188,6 +193,33 @@ func (m *MetadataStore) ListEntries(offset, limit int) ([]models.StructuredEntry
 		entries = append(entries, entry)
 	}
 	return entries, rows.Err()
+}
+
+// DeleteEntry 删除指定知识条目及其文件变更记录
+func (m *MetadataStore) DeleteEntry(id string) error {
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM file_changes WHERE entry_id = ?`, id); err != nil {
+		return fmt.Errorf("删除条目文件变更失败: %w", err)
+	}
+
+	result, err := tx.Exec(`DELETE FROM entries WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("删除条目失败: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
+		return fmt.Errorf("条目 %s 不存在", id)
+	}
+
+	return tx.Commit()
 }
 
 // SaveSnapshot 保存项目快照

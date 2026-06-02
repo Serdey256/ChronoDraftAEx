@@ -221,6 +221,22 @@ func (s *ChronoService) ListEntries(offset, limit int) ([]models.StructuredEntry
 	return s.core.ListEntries(offset, limit)
 }
 
+// DeleteEntry 前端调用：删除知识条目，并返回删除前内容用于撤销
+func (s *ChronoService) DeleteEntry(entryID string) (*models.StructuredEntry, error) {
+	if s.core == nil {
+		return nil, fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.DeleteEntry(entryID)
+}
+
+// RestoreEntry 前端调用：恢复此前删除的知识条目
+func (s *ChronoService) RestoreEntry(entry models.StructuredEntry) error {
+	if s.core == nil {
+		return fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.RestoreEntry(&entry)
+}
+
 // GetCodeEntities 前端调用：获取指定文件的代码实体（AST 分析结果）
 func (s *ChronoService) GetCodeEntities(filePath string) ([]models.CodeEntity, error) {
 	if s.core == nil {

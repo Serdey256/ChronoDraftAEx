@@ -28,7 +28,11 @@ function Cleanup {
 }
 
 # 注册 Ctrl+C 处理
-[Console]::TreatControlCAsInput = $false
+try {
+    [Console]::TreatControlCAsInput = $false
+} catch {
+    # 在输出重定向或非交互式运行时可能不可用，忽略即可
+}
 
 try {
     Write-Host ""
@@ -84,13 +88,13 @@ try {
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host ""
 
-    # 设置环境变量并启动 Wails（切换到 src 目录运行）
+    # 设置环境变量并直接运行 Wails Go 应用（切换到 src 目录运行）
     # FRONTEND_DEVSERVER_URL 让 main.go 知道 Vite 在哪里，从而创建反向代理
     $env:FRONTEND_DEVSERVER_URL = "http://localhost:$FrontendPort"
     $env:GOFLAGS = "-ldflags=-linkmode=internal"
     Push-Location $srcDir
     try {
-        & wails3 dev --port $FrontendPort
+        & go run .
     } finally {
         Pop-Location
     }
