@@ -216,7 +216,7 @@ function CodeEntities() {
 
       {!loading && !error && Object.keys(grouped).length === 0 && (
         <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
-          暂无代码实体数据。请运行 <strong>index_project</strong> 触发 AST 分析。
+          暂无代码实体数据。请运行 <strong>scaffold_project</strong> 触发 AST 分析。
         </div>
       )}
 

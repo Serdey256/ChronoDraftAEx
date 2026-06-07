@@ -164,7 +164,7 @@ func (s *ChronoService) DetectDependencies() ([]string, error) {
 	return depsdetect.DetectDependencies(s.projectRoot)
 }
 
-// GenerateAgentsMD 前端调用：手动生成 AGENTS.md
+// GenerateAgentsMD 兼容保留：纯 MCP 快照模式下不再生成文件
 func (s *ChronoService) GenerateAgentsMD() error {
 	if s.core == nil {
 		return fmt.Errorf("记忆内核未初始化")
@@ -200,7 +200,9 @@ func (s *ChronoService) SearchGraph(query string, topK int) (*models.GraphData, 
 	if s.core == nil {
 		return nil, fmt.Errorf("记忆内核未初始化")
 	}
-	if topK <= 0 { topK = 5 }
+	if topK <= 0 {
+		topK = 5
+	}
 	nodes, edges, err := s.core.SearchGraph(query, topK)
 	if err != nil {
 		return nil, err
@@ -217,6 +219,22 @@ func (s *ChronoService) ListEntries(offset, limit int) ([]models.StructuredEntry
 		limit = 20
 	}
 	return s.core.ListEntries(offset, limit)
+}
+
+// DeleteEntry 前端调用：删除知识条目，并返回删除前内容用于撤销
+func (s *ChronoService) DeleteEntry(entryID string) (*models.StructuredEntry, error) {
+	if s.core == nil {
+		return nil, fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.DeleteEntry(entryID)
+}
+
+// RestoreEntry 前端调用：恢复此前删除的知识条目
+func (s *ChronoService) RestoreEntry(entry models.StructuredEntry) error {
+	if s.core == nil {
+		return fmt.Errorf("记忆内核未初始化")
+	}
+	return s.core.RestoreEntry(&entry)
 }
 
 // GetCodeEntities 前端调用：获取指定文件的代码实体（AST 分析结果）
@@ -283,14 +301,14 @@ func (s *ChronoService) IsAIAnnotationEnabled() bool {
 	return s.core.IsAIAnnotationEnabled()
 }
 
-// SetAgentsMDEnabled 前端调用：启用/禁用 AGENTS.md 自动生成
+// SetAgentsMDEnabled 兼容保留：纯 MCP 快照模式下无实际效果
 func (s *ChronoService) SetAgentsMDEnabled(enabled bool) {
 	if s.core != nil {
 		s.core.SetAgentsMDEnabled(enabled)
 	}
 }
 
-// IsAgentsMDEnabled 前端调用：查询 AGENTS.md 自动生成是否启用
+// IsAgentsMDEnabled 兼容保留：纯 MCP 快照模式下始终为 false
 func (s *ChronoService) IsAgentsMDEnabled() bool {
 	if s.core == nil {
 		return true
@@ -298,7 +316,7 @@ func (s *ChronoService) IsAgentsMDEnabled() bool {
 	return s.core.IsAgentsMDEnabled()
 }
 
-// IndexProject 前端调用：全量索引项目现有代码
+// IndexProject 前端调用：项目脚手架（零AI成本的轻量结构扫描）
 func (s *ChronoService) IndexProject() (*models.StructuredEntry, error) {
 	if s.core == nil {
 		return nil, fmt.Errorf("记忆内核未初始化")

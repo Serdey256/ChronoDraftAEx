@@ -4,6 +4,7 @@ package codeanalysis
 
 import (
 	"ChronoDraftAEx/pkg/models"
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,10 +28,59 @@ var ignoreList = []string{
 
 var ignoreExtensions = []string{".class", ".pyc", ".pyo", ".o", ".so", ".dll", ".exe", ".bin", ".flat", ".dex"}
 
+var cachedGitignorePatterns []string
+var gitignoreLoaded bool
+
+// loadGitignore 读取并缓存 .gitignore 规则
+func loadGitignore(projectRoot string) {
+	if gitignoreLoaded {
+		return
+	}
+	gitignoreLoaded = true
+	f, err := os.Open(filepath.Join(projectRoot, ".gitignore"))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		cachedGitignorePatterns = append(cachedGitignorePatterns, line)
+	}
+}
+
+// matchGitignorePattern 简易 .gitignore 模式匹配
+func matchGitignorePattern(pattern, path string) bool {
+	if strings.HasPrefix(pattern, "!") {
+		return false
+	}
+	if strings.HasSuffix(pattern, "/") {
+		dir := strings.TrimSuffix(pattern, "/")
+		return strings.Contains(path, "/"+dir+"/") || strings.HasPrefix(path, dir+"/") || path == dir
+	}
+	if strings.HasPrefix(pattern, "*.") {
+		ext := pattern[1:]
+		return strings.HasSuffix(path, ext)
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix)
+	}
+	return strings.Contains(path, "/"+pattern) || strings.HasPrefix(path, pattern+"/") || path == pattern
+}
+
 // shouldIgnore 判断路径是否匹配忽略规则
 func shouldIgnore(path string) bool {
 	for _, ig := range ignoreList {
 		if strings.Contains(path, ig) {
+			return true
+		}
+	}
+	for _, pattern := range cachedGitignorePatterns {
+		if matchGitignorePattern(pattern, path) {
 			return true
 		}
 	}
@@ -82,6 +132,7 @@ func AnalyzeFile(filePath string) ([]models.CodeEntity, error) {
 // projectRoot: 项目根目录
 // saveFn: 保存回调，参数为 (filePath, entities)
 func AnalyzeProject(projectRoot string, saveFn func(string, []models.CodeEntity) error) error {
+	loadGitignore(projectRoot)
 	return filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err

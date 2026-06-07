@@ -261,7 +261,8 @@ func buildToolsSection() string {
 		"- `get_graph(query, top_k)` — 关键词查询关联图谱\n" +
 		"- `get_snapshot()` — 获取最新的项目全局上下文快照\n" +
 		"- `list_entries(compact=\"true\")` — 分页列出知识条目\n" +
-		"- `record_change(what, why, problem, files, tags)` — ⭐ 记录本次修改的设计决策\n\n" +
+		"- `record_change(what, why, problem, files, tags)` — ⭐ 记录本次修改的设计决策\n" +
+		"- `scaffold_project()` — 项目脚手架（零AI成本，首次接入时使用）\n\n" +
 		"### 核心原则：改完代码必须 record_change\n\n" +
 		"其他 Agent 需要通过它理解你的设计意图。不记录 = 知识丢失。详见 `致AI-Agent.md`。\n\n"
 }

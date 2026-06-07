@@ -23,11 +23,11 @@ const embeddingDim = 1536 // text-embedding-3-small 维度（仅作降级零向�
 
 // VectorDB 向量数据库封装（基于 SQLite + 余弦相似度）
 type VectorDB struct {
-	db       *sql.DB
-	apiKey   string
-	apiBase  string
-	model    string
-	dim      int // 动态维度，首次 API 调用后确定
+	db      *sql.DB
+	apiKey  string
+	apiBase string
+	model   string
+	dim     int // 动态维度，首次 API 调用后确定
 }
 
 // NewVectorDB 创建向量数据库实例
@@ -96,6 +96,15 @@ func (v *VectorDB) InsertEntry(ctx context.Context, entry *models.StructuredEntr
 		entry.Timestamp.Format(time.RFC3339),
 	)
 	return err
+}
+
+// DeleteEntry 删除指定知识条目的向量记录
+func (v *VectorDB) DeleteEntry(ctx context.Context, entryID string) error {
+	_, err := v.db.ExecContext(ctx, `DELETE FROM vectors WHERE entry_id = ?`, entryID)
+	if err != nil {
+		return fmt.Errorf("删除向量条目失败: %w", err)
+	}
+	return nil
 }
 
 // Search 语义搜索向量库

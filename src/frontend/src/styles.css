@@ -270,6 +270,48 @@ html, body, #root {
   padding: 16px;
 }
 
+.entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.entry-delete-btn {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: 1px solid rgba(218, 54, 51, 0.45);
+  border-radius: 6px;
+  background: rgba(218, 54, 51, 0.08);
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.entry-delete-btn:hover:not(:disabled) {
+  background: rgba(218, 54, 51, 0.16);
+  border-color: var(--danger);
+}
+
+.entry-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.undo-delete-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(210, 153, 34, 0.55);
+  border-radius: 8px;
+  background: rgba(210, 153, 34, 0.1);
+  color: var(--warning);
+  font-size: 13px;
+}
+
 .entry-meta {
   display: flex;
   align-items: center;

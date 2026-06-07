@@ -3,19 +3,21 @@
 package memorycore
 
 import (
-	"ChronoDraftAEx/internal/agentswriter"
-	"ChronoDraftAEx/internal/changeorganize"
 	"ChronoDraftAEx/internal/changedetect"
+	"ChronoDraftAEx/internal/changeorganize"
 	"ChronoDraftAEx/internal/codeanalysis"
 	"ChronoDraftAEx/internal/githook"
 	"ChronoDraftAEx/internal/kbindex"
 	"ChronoDraftAEx/pkg/models"
 	"ChronoDraftAEx/pkg/utils"
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,11 +27,9 @@ type MemoryCore struct {
 	detector            *changedetect.Detector
 	organizer           *changeorganize.Organizer
 	kbIndex             *kbindex.KBIndex
-	agentsWriter        *agentswriter.Writer
 	ctx                 context.Context
 	projectRoot         string
 	aiAnnotationEnabled bool
-	agentsMDEnabled     bool // AGENTS.md 自动生成开关，默认 true
 	annotationCurrent   int
 	annotationTotal     int
 	indexPhase          string
@@ -47,7 +47,7 @@ func NewMemoryCore(projectRoot, aiAPIKey, aiBaseURL, aiModel string) (*MemoryCor
 	// 配置嵌入模型 API（与 chat API 共享 key 和 base，模型可单独配置）
 	embeddingModel := os.Getenv("CHRONODRAFT_EMBEDDING_MODEL")
 	if embeddingModel == "" {
-		embeddingModel = "text-embedding-3-small" // OpenAI 默认
+		embeddingModel = "text-embedding-3-small"
 	}
 	kbi.SetEmbeddingConfig(aiAPIKey, aiBaseURL, embeddingModel)
 
@@ -56,49 +56,42 @@ func NewMemoryCore(projectRoot, aiAPIKey, aiBaseURL, aiModel string) (*MemoryCor
 		return nil, fmt.Errorf("初始化知识库失败: %w", err)
 	}
 
-	m := &MemoryCore{
+	return &MemoryCore{
 		detector:            detector,
 		organizer:           organizer,
 		kbIndex:             kbi,
-		agentsWriter:        agentswriter.NewWriter(projectRoot),
 		ctx:                 ctx,
 		projectRoot:         projectRoot,
 		aiAnnotationEnabled: false,
-		agentsMDEnabled:     true,
-	}
-	// Auto-refresh AGENTS.md on startup to ensure latest data
-	m.refreshSmartAgentsMD()
-
-	return m, nil
+	}, nil
 }
 
 // CaptureAndIndex 捕获变动、生成摘要并索引到知识库（完整工作流）
 func (m *MemoryCore) CaptureAndIndex(oldSnap, newSnap map[string]changedetect.FileSnapshot, sessionID string) (*models.StructuredEntry, error) {
-	// 1. 检测变动
 	record := m.detector.DetectChanges(oldSnap, newSnap, sessionID)
 	if len(record.Changes) == 0 {
 		return nil, fmt.Errorf("未检测到文件变动")
 	}
 
-	// 2. AI 生成结构化摘要
 	entry, err := m.organizer.Organize(record)
 	if err != nil {
 		return nil, fmt.Errorf("生成结构化摘要失败: %w", err)
 	}
 
-	// 3. 索引到知识库
 	if err := m.kbIndex.IndexEntry(m.ctx, entry); err != nil {
 		return nil, fmt.Errorf("索引知识库失败: %w", err)
 	}
 
-	// 自动刷新 AGENTS.md（智能格式）
-	m.refreshSmartAgentsMD()
-
 	return entry, nil
 }
 
-// IndexProject 全量索引：将项目现有代码当作一次初始变更处理
+// IndexProject 全量索引（兼容别名，实际走脚手架流程）
 func (m *MemoryCore) IndexProject() (*models.StructuredEntry, error) {
+	return m.ScaffoldProject()
+}
+
+// ScaffoldProject 轻量脚手架：零 AI 成本的结构扫描 + 目录层级 + Git 历史导入
+func (m *MemoryCore) ScaffoldProject() (*models.StructuredEntry, error) {
 	m.indexPhase = "扫描文件"
 	snapshot, err := m.detector.ScanSnapshot()
 	if err != nil {
@@ -106,28 +99,31 @@ func (m *MemoryCore) IndexProject() (*models.StructuredEntry, error) {
 		return nil, fmt.Errorf("扫描项目文件失败: %w", err)
 	}
 
-	var changes []models.FileChange
+	var filePaths []string
 	for path := range snapshot {
-		changes = append(changes, models.FileChange{
-			Path:       path,
-			ChangeType: "add",
-		})
+		filePaths = append(filePaths, path)
 	}
-
-	if len(changes) == 0 {
+	if len(filePaths) == 0 {
+		m.indexPhase = ""
 		return nil, fmt.Errorf("项目中未发现任何文件")
 	}
 
-	record := &models.ChangeRecord{
-		ID:        utils.GenerateID(),
-		Timestamp: time.Now(),
-		SessionID: "full-index",
-		Changes:   changes,
+	m.indexPhase = "构建目录层级"
+	log.Printf("构建目录层级：%d 个文件...", len(filePaths))
+	if err := m.kbIndex.UpdateDirectoryHierarchy(m.ctx, filePaths); err != nil {
+		log.Printf("警告: 构建目录层级失败: %v", err)
 	}
 
-	// Phase 2: Zero-cost operations (run FIRST, before AI)
-	// These should always succeed regardless of AI availability
-	// 2a. Install Git Hook
+	m.indexPhase = "AST代码分析"
+	if err := codeanalysis.AnalyzeProject(m.projectRoot, m.AnnotateAndSaveEntities); err != nil {
+		log.Printf("警告: AST 代码分析失败: %v", err)
+	}
+
+	m.indexPhase = "构建导入关系"
+	if err := m.refreshAllImportEdges(); err != nil {
+		log.Printf("警告: 构建 IMPORTS 关系失败: %v", err)
+	}
+
 	m.indexPhase = "安装GitHook"
 	binaryPath := os.Getenv("CHRONODRAFT_BINARY_PATH")
 	if binaryPath != "" {
@@ -135,44 +131,53 @@ func (m *MemoryCore) IndexProject() (*models.StructuredEntry, error) {
 			log.Printf("警告: 安装 Git Hook 失败: %v", err)
 		}
 	} else {
-		log.Println("警告: 环境变量 CHRONODRAFT_BINARY_PATH 未设置，跳过 Git Hook 安装")
-	}
-	// 2b. AST code analysis
-	m.indexPhase = "AST代码分析"
-	if err := codeanalysis.AnalyzeProject(m.projectRoot, m.AnnotateAndSaveEntities); err != nil {
-		log.Printf("警告: AST 代码分析失败: %v", err)
+		log.Println("提示: 环境变量 CHRONODRAFT_BINARY_PATH 未设置，跳过 Git Hook 安装")
 	}
 
-	// Phase 3: AI-dependent step (may fail, we continue regardless)
-	m.indexPhase = "AI摘要"
-	entry, aiErr := m.organizer.Organize(record)
-	if aiErr != nil {
-		log.Printf("警告: AI 组织摘要失败（将跳过知识条目索引）: %v", aiErr)
-		// Create a minimal entry so callers get something back
-		entry = &models.StructuredEntry{
-			ID:        utils.GenerateID(),
-			Timestamp: time.Now(),
-			SessionID: "full-index",
-			Summary:   "项目全量索引（AI 摘要未生成）",
-			AffectedFiles: changes,
+	m.indexPhase = "导入Git历史"
+	if err := m.ImportGitHistory(50); err != nil {
+		log.Printf("警告: 导入 Git 历史失败: %v", err)
+	}
+
+	m.indexPhase = ""
+	return &models.StructuredEntry{
+		ID:        utils.GenerateID(),
+		Timestamp: time.Now(),
+		SessionID: "scaffold",
+		Summary:   fmt.Sprintf("项目脚手架构建完成：扫描了 %d 个文件", len(filePaths)),
+	}, nil
+}
+
+// ImportGitHistory 导入最近 N 条 git commit 记录（仅元数据，不做 AST 分析）
+func (m *MemoryCore) ImportGitHistory(limit int) error {
+	cmd := exec.Command("git", "log", "--oneline", "--format=%H|%s|%an|%ai", "-n", strconv.Itoa(limit))
+	cmd.Dir = m.projectRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("git log 执行失败: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		hash := strings.TrimSpace(parts[0])
+		message := strings.TrimSpace(parts[1])
+		author := strings.TrimSpace(parts[2])
+		timestamp := strings.TrimSpace(parts[3])
+		files, ins, dels := m.readCommitFilesAndStats(hash)
+		if err := m.kbIndex.SaveCommit(hash, message, author, timestamp, files, ins, dels); err != nil {
+			log.Printf("保存 commit %s 失败: %v", hash, err)
 		}
 	}
 
-	// Try to index the entry (may fail if AI didn't produce embeddings, that's OK)
-	if err := m.kbIndex.IndexEntry(m.ctx, entry); err != nil {
-		log.Printf("警告: 索引知识条目失败: %v", err)
-	}
-
-	// Phase 4: Generate smart AGENTS.md (always, using all available data)
-	// NOTE: do NOT call old Write() anymore - only smart format
-	m.indexPhase = "生成AGENTS.md"
-	m.refreshSmartAgentsMD()
-
-	m.indexPhase = ""
-	if aiErr != nil {
-		return entry, nil // return successfully even without AI
-	}
-	return entry, nil
+	log.Printf("已导入 %d 条 git commit 记录", len(lines))
+	return nil
 }
 
 // SearchKnowledge 搜索知识库
@@ -192,6 +197,10 @@ func (m *MemoryCore) GetGraphData(limit int) ([]models.KnowledgeNode, []models.K
 
 // SearchGraph 查询图谱：根据关键词搜索，返回关联子图
 func (m *MemoryCore) SearchGraph(query string, topK int) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	if nodes, edges, ok := m.searchStructureGraph(query, topK); ok {
+		return nodes, edges, nil
+	}
+
 	results, err := m.kbIndex.Search(m.ctx, query, topK)
 	if err != nil || len(results) == 0 {
 		entries, _ := m.kbIndex.ListEntries(0, 50)
@@ -201,31 +210,94 @@ func (m *MemoryCore) SearchGraph(query string, topK int) ([]models.KnowledgeNode
 				results = append(results, models.SearchResult{Entry: e, Score: 0.5})
 			}
 		}
-		if len(results) > topK { results = results[:topK] }
+		if len(results) > topK {
+			results = results[:topK]
+		}
 	}
 	nodeMap := make(map[string]models.KnowledgeNode)
-	edgeMap := make(map[string]bool)
+	edgeMap := make(map[string]models.KnowledgeEdge)
 	for _, r := range results {
 		nodes, edges, _ := m.kbIndex.QueryRelated(m.ctx, r.Entry.ID)
-		for _, n := range nodes { nodeMap[n.ID] = n }
+		for _, n := range nodes {
+			nodeMap[n.ID] = n
+		}
 		for _, e := range edges {
-			k := e.SourceID + "->" + e.TargetID
-			if !edgeMap[k] { edgeMap[k] = true }
+			k := e.SourceID + "|" + e.TargetID + "|" + e.Relation
+			edgeMap[k] = e
 		}
 	}
 	nodes := make([]models.KnowledgeNode, 0, len(nodeMap))
-	for _, n := range nodeMap { nodes = append(nodes, n) }
+	for _, n := range nodeMap {
+		nodes = append(nodes, n)
+	}
 	var edgeList []models.KnowledgeEdge
-	for k := range edgeMap {
-		parts := strings.SplitN(k, "->", 2)
-		if len(parts) == 2 { edgeList = append(edgeList, models.KnowledgeEdge{SourceID: parts[0], TargetID: parts[1]}) }
+	for _, e := range edgeMap {
+		edgeList = append(edgeList, e)
 	}
 	return nodes, edgeList, nil
+}
+
+func (m *MemoryCore) searchStructureGraph(query string, topK int) ([]models.KnowledgeNode, []models.KnowledgeEdge, bool) {
+	if strings.TrimSpace(query) == "" {
+		return nil, nil, false
+	}
+	matches, err := m.kbIndex.SearchNodesByLabel(m.ctx, query, topK)
+	if err != nil || len(matches) == 0 {
+		return nil, nil, false
+	}
+
+	nodeMap := make(map[string]models.KnowledgeNode)
+	edgeMap := make(map[string]models.KnowledgeEdge)
+	for _, match := range matches {
+		var nodes []models.KnowledgeNode
+		var edges []models.KnowledgeEdge
+		if match.Type == "directory" || match.Type == "module" {
+			dirPath := strings.TrimPrefix(match.ID, "dir:")
+			nodes, edges, err = m.kbIndex.GetModuleGraph(m.ctx, dirPath, topK*20)
+		} else {
+			nodes, edges, err = m.kbIndex.QueryRelated(m.ctx, match.ID)
+		}
+		if err != nil {
+			continue
+		}
+		for _, n := range nodes {
+			nodeMap[n.ID] = n
+		}
+		for _, e := range edges {
+			k := e.SourceID + "|" + e.TargetID + "|" + e.Relation
+			edgeMap[k] = e
+		}
+	}
+	if len(nodeMap) == 0 {
+		return nil, nil, false
+	}
+	nodes := make([]models.KnowledgeNode, 0, len(nodeMap))
+	for _, n := range nodeMap {
+		nodes = append(nodes, n)
+	}
+	edges := make([]models.KnowledgeEdge, 0, len(edgeMap))
+	for _, e := range edgeMap {
+		edges = append(edges, e)
+	}
+	return nodes, edges, true
 }
 
 // ListEntries 列出知识条目
 func (m *MemoryCore) ListEntries(offset, limit int) ([]models.StructuredEntry, error) {
 	return m.kbIndex.ListEntries(offset, limit)
+}
+
+// DeleteEntry 删除知识条目，并返回删除前内容用于撤销
+func (m *MemoryCore) DeleteEntry(entryID string) (*models.StructuredEntry, error) {
+	return m.kbIndex.DeleteEntry(m.ctx, entryID)
+}
+
+// RestoreEntry 恢复此前删除的知识条目
+func (m *MemoryCore) RestoreEntry(entry *models.StructuredEntry) error {
+	if entry == nil {
+		return fmt.Errorf("待恢复条目为空")
+	}
+	return m.kbIndex.RestoreEntry(m.ctx, entry)
 }
 
 // CreateSnapshot 创建当前项目快照
@@ -248,9 +320,8 @@ func (m *MemoryCore) ListSnapshots() ([]models.ProjectSnapshot, error) {
 	return m.kbIndex.ListSnapshots()
 }
 
-// GenerateAgentsMD 手动触发 AGENTS.md 生成（使用智能格式）
+// GenerateAgentsMD 兼容保留：纯 MCP 模式下不再落盘生成文件
 func (m *MemoryCore) GenerateAgentsMD() error {
-	m.refreshSmartAgentsMD()
 	return nil
 }
 
@@ -259,10 +330,148 @@ func (m *MemoryCore) IndexEntry(entry *models.StructuredEntry) error {
 	return m.kbIndex.IndexEntry(m.ctx, entry)
 }
 
-// RefreshAgentsMD 刷新 AGENTS.md 文件
+// RefreshAgentsMD 兼容保留：纯 MCP 模式下不再刷新文件
 func (m *MemoryCore) RefreshAgentsMD() error {
-	m.refreshSmartAgentsMD()
 	return nil
+}
+
+func (m *MemoryCore) refreshAllImportEdges() error {
+	files, err := m.kbIndex.ListCodeEntityFiles()
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	existing := make(map[string]bool, len(files))
+	for _, f := range files {
+		existing[strings.ReplaceAll(f, "\\", "/")] = true
+	}
+	modulePath := readGoModulePath(m.projectRoot)
+	imports := make(map[string][]string)
+	for _, file := range files {
+		imports[file] = []string{}
+		entities, err := m.kbIndex.GetCodeEntities(file)
+		if err != nil {
+			continue
+		}
+		seen := make(map[string]bool)
+		for _, e := range entities {
+			if e.EntityType != "import" {
+				continue
+			}
+			if target, ok := resolveImportTarget(file, e.Name, existing, modulePath); ok && target != file && !seen[target] {
+				imports[file] = append(imports[file], target)
+				seen[target] = true
+			}
+		}
+	}
+	return m.kbIndex.UpdateImportEdges(m.ctx, imports)
+}
+
+func (m *MemoryCore) readCommitFilesAndStats(hash string) (string, int, int) {
+	filesCmd := exec.Command("git", "show", "--format=", "--name-only", "-M", hash)
+	filesCmd.Dir = m.projectRoot
+	filesOut, err := filesCmd.Output()
+	if err != nil {
+		return "", 0, 0
+	}
+	var files []string
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(strings.NewReader(string(filesOut)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		line = strings.ReplaceAll(line, "\\", "/")
+		if !seen[line] {
+			seen[line] = true
+			files = append(files, line)
+		}
+	}
+
+	statsCmd := exec.Command("git", "show", "--format=", "--numstat", "-M", hash)
+	statsCmd.Dir = m.projectRoot
+	statsOut, err := statsCmd.Output()
+	if err != nil {
+		return strings.Join(files, ","), 0, 0
+	}
+	ins, dels := 0, 0
+	statsScanner := bufio.NewScanner(strings.NewReader(string(statsOut)))
+	for statsScanner.Scan() {
+		parts := strings.Fields(statsScanner.Text())
+		if len(parts) < 3 {
+			continue
+		}
+		if parts[0] != "-" {
+			if n, err := strconv.Atoi(parts[0]); err == nil {
+				ins += n
+			}
+		}
+		if parts[1] != "-" {
+			if n, err := strconv.Atoi(parts[1]); err == nil {
+				dels += n
+			}
+		}
+	}
+
+	return strings.Join(files, ","), ins, dels
+}
+
+func readGoModulePath(projectRoot string) string {
+	data, err := os.ReadFile(filepath.Join(projectRoot, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+	return ""
+}
+
+func resolveImportTarget(sourceFile, importName string, existing map[string]bool, modulePath string) (string, bool) {
+	importName = strings.TrimSpace(strings.Trim(importName, `"'`))
+	if importName == "" {
+		return "", false
+	}
+
+	addCandidates := func(base string) []string {
+		base = strings.ReplaceAll(base, "\\", "/")
+		base = strings.TrimPrefix(base, "./")
+		base = strings.TrimPrefix(base, "/")
+		var candidates []string
+		exts := []string{"", ".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go", ".java", ".rs", ".kt", ".kts", ".c", ".cpp", ".cc", ".h", ".hpp", ".cs"}
+		for _, ext := range exts {
+			candidates = append(candidates, base+ext)
+		}
+		for _, ext := range exts[1:] {
+			candidates = append(candidates, strings.TrimSuffix(base, "/")+"/index"+ext)
+		}
+		return candidates
+	}
+
+	var bases []string
+	if strings.HasPrefix(importName, "./") || strings.HasPrefix(importName, "../") {
+		bases = append(bases, filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(sourceFile), importName))))
+	} else {
+		bases = append(bases, strings.ReplaceAll(importName, "\\", "/"))
+		if modulePath != "" && strings.HasPrefix(importName, modulePath+"/") {
+			bases = append(bases, strings.TrimPrefix(importName, modulePath+"/"))
+		}
+	}
+
+	for _, base := range bases {
+		for _, candidate := range addCandidates(base) {
+			if existing[candidate] {
+				return candidate, true
+			}
+		}
+	}
+	return "", false
 }
 
 // buildDirStructure 构建项目目录结构（2层深度），返回 markdown 格式字符串
@@ -311,41 +520,16 @@ func (m *MemoryCore) buildDirStructure() string {
 	return sb.String()
 }
 
-// SetAgentsMDEnabled 启用/禁用 AGENTS.md 自动生成
-func (m *MemoryCore) SetAgentsMDEnabled(enabled bool) {
-	m.agentsMDEnabled = enabled
-}
+// SetAgentsMDEnabled 兼容保留：纯 MCP 模式下无效果
+func (m *MemoryCore) SetAgentsMDEnabled(enabled bool) {}
 
-// IsAgentsMDEnabled 查询 AGENTS.md 自动生成是否启用
+// IsAgentsMDEnabled 兼容保留：纯 MCP 模式下始终为 false
 func (m *MemoryCore) IsAgentsMDEnabled() bool {
-	return m.agentsMDEnabled
+	return false
 }
 
-// refreshSmartAgentsMD 使用智能方式刷新 AGENTS.md
-func (m *MemoryCore) refreshSmartAgentsMD() {
-	if !m.agentsMDEnabled {
-		return
-	}
-	commits, err := m.kbIndex.ListCommits(3)
-	if err != nil {
-		log.Printf("警告: 获取 commit 记录失败: %v", err)
-		commits = nil
-	}
-
-	entries, err := m.kbIndex.ListEntries(0, 5)
-	if err != nil {
-		log.Printf("警告: 获取知识条目失败: %v", err)
-		entries = nil
-	}
-
-	dirStructure := m.buildDirStructure()
-
-	content := agentswriter.GenerateSmartMarkdown(commits, entries, dirStructure)
-
-	if err := m.agentsWriter.WriteContent(content); err != nil {
-		log.Printf("警告: 写入智能 AGENTS.md 失败: %v", err)
-	}
-}
+// refreshSmartAgentsMD 兼容保留：纯 MCP 模式下不再写入任何文件
+func (m *MemoryCore) refreshSmartAgentsMD() {}
 
 // SaveCommit 保存 git commit 记录
 func (m *MemoryCore) SaveCommit(hash, message, author, timestamp, files string, ins, dels int) error {
@@ -382,7 +566,7 @@ func (m *MemoryCore) GetAnnotationProgress() (int, int) {
 	return m.annotationCurrent, m.annotationTotal
 }
 
-// GetIndexPhase 返回全量索引当前阶段
+// GetIndexPhase 返回当前脚手架阶段
 func (m *MemoryCore) GetIndexPhase() string {
 	return m.indexPhase
 }
@@ -421,7 +605,6 @@ func (m *MemoryCore) AnnotateAllCodeEntities() error {
 		return nil
 	}
 
-	// Filter to entities without description
 	var toAnnotate []models.CodeEntity
 	for _, e := range all {
 		if e.Metadata == "" || !strings.Contains(e.Metadata, `"description"`) {
@@ -435,7 +618,6 @@ func (m *MemoryCore) AnnotateAllCodeEntities() error {
 
 	log.Printf("开始 AI 语义标注 %d 个代码实体...", len(toAnnotate))
 
-	// Batch in groups of 10 to avoid oversized prompts
 	batchSize := 10
 	m.annotationTotal = len(toAnnotate)
 	m.annotationCurrent = 0
@@ -450,7 +632,6 @@ func (m *MemoryCore) AnnotateAllCodeEntities() error {
 			log.Printf("标注批次 %d-%d 失败: %v", i, end, err)
 			continue
 		}
-		// Save each annotated entity back
 		for _, ae := range annotated {
 			_ = m.kbIndex.UpdateCodeEntityMetadata(ae.FilePath, ae.Name, ae.EntityType, ae.Metadata)
 		}
@@ -473,7 +654,13 @@ func (m *MemoryCore) AnnotateAndSaveEntities(filePath string, entities []models.
 			entities = annotated
 		}
 	}
-	return m.kbIndex.SaveCodeEntities(filePath, entities)
+	if err := m.kbIndex.SaveCodeEntities(filePath, entities); err != nil {
+		return err
+	}
+	if err := m.refreshAllImportEdges(); err != nil {
+		log.Printf("刷新 IMPORTS 关系失败 %s: %v", filePath, err)
+	}
+	return nil
 }
 
 // Close 关闭记忆内核，释放资源

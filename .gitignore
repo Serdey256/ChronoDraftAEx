@@ -17,6 +17,7 @@ Thumbs.db
 
 # Agent
 .sisyphus/
+.opencode/
 
 # log
 log/

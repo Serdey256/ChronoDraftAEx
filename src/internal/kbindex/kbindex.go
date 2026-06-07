@@ -115,6 +115,36 @@ func (k *KBIndex) ListEntries(offset, limit int) ([]models.StructuredEntry, erro
 	return k.metaDB.ListEntries(offset, limit)
 }
 
+// DeleteEntry 从所有索引后端删除知识条目，并返回删除前的完整条目用于撤销
+func (k *KBIndex) DeleteEntry(ctx context.Context, entryID string) (*models.StructuredEntry, error) {
+	entry, err := k.metaDB.GetEntryByID(entryID)
+	if err != nil {
+		return nil, err
+	}
+	rollback := func(cause error) (*models.StructuredEntry, error) {
+		if restoreErr := k.IndexEntry(ctx, entry); restoreErr != nil {
+			return nil, fmt.Errorf("%w; 回滚恢复失败: %v", cause, restoreErr)
+		}
+		return nil, cause
+	}
+
+	if err := k.vectorDB.DeleteEntry(ctx, entryID); err != nil {
+		return nil, err
+	}
+	if err := k.graphDB.DeleteEntry(ctx, entryID); err != nil {
+		return rollback(err)
+	}
+	if err := k.metaDB.DeleteEntry(entryID); err != nil {
+		return rollback(err)
+	}
+	return entry, nil
+}
+
+// RestoreEntry 将删除前的知识条目重新索引到所有后端
+func (k *KBIndex) RestoreEntry(ctx context.Context, entry *models.StructuredEntry) error {
+	return k.IndexEntry(ctx, entry)
+}
+
 // SaveSnapshot 保存项目快照
 func (k *KBIndex) SaveSnapshot(snapshot *models.ProjectSnapshot) error {
 	return k.metaDB.SaveSnapshot(snapshot)
@@ -171,4 +201,24 @@ func (k *KBIndex) Close() error {
 	_ = k.graphDB.Close()
 	_ = k.metaDB.Close()
 	return nil
+}
+
+// UpdateDirectoryHierarchy 从文件路径列表构建目录层级图
+func (k *KBIndex) UpdateDirectoryHierarchy(ctx context.Context, filePaths []string) error {
+	return k.graphDB.UpdateDirectoryHierarchy(ctx, filePaths)
+}
+
+// UpdateImportEdges 批量创建文件间的 IMPORTS 边
+func (k *KBIndex) UpdateImportEdges(ctx context.Context, imports map[string][]string) error {
+	return k.graphDB.UpdateImportEdges(ctx, imports)
+}
+
+// GetModuleGraph 查询指定目录下的子图
+func (k *KBIndex) GetModuleGraph(ctx context.Context, dirPath string, limit int) ([]models.KnowledgeNode, []models.KnowledgeEdge, error) {
+	return k.graphDB.GetModuleGraph(ctx, dirPath, limit)
+}
+
+// SearchNodesByLabel 按标签模糊搜索图节点
+func (k *KBIndex) SearchNodesByLabel(ctx context.Context, query string, limit int) ([]models.KnowledgeNode, error) {
+	return k.graphDB.SearchNodesByLabel(ctx, query, limit)
 }

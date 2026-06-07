@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Call } from '@wailsio/runtime'
-import { SearchKnowledge, GetCurrentProject, IndexProject, IsKnowledgeBaseEmpty, GenerateAgentsMD } from '../../bindings/ChronoDraftAEx/chronoservice.js'
+import { SearchKnowledge, GetCurrentProject, IndexProject, IsKnowledgeBaseEmpty } from '../../bindings/ChronoDraftAEx/chronoservice.js'
 import { useToast } from '../contexts/ToastContext'
 import type { StructuredEntry } from '../types'
 
@@ -19,7 +19,9 @@ function Dashboard() {
   const [kbEmpty, setKbEmpty] = useState(false)
   const [indexPhase, setIndexPhase] = useState('')
   const [indexing, setIndexing] = useState(false)
-  const [agentsMDEnabled, setAgentsMDEnabled] = useState(true)
+  const [deletedEntry, setDeletedEntry] = useState<StructuredEntry | null>(null)
+  const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
+  const [restoringEntry, setRestoringEntry] = useState(false)
 
   const search = async (q: string) => {
     setLoading(true)
@@ -37,12 +39,6 @@ function Dashboard() {
     search('')
     loadCurrentProject()
     checkEmpty()
-    ;(async () => {
-      try {
-        const v = await (Call as any).ByName('main.ChronoService.IsAgentsMDEnabled')
-        setAgentsMDEnabled(!!v)
-      } catch { setAgentsMDEnabled(true) }
-    })()
   }, [])
 
   const checkEmpty = async () => {
@@ -57,7 +53,7 @@ function Dashboard() {
   const refresh = async () => {
     setLoading(true)
     try {
-      const [results] = await Promise.all([SearchKnowledge('', 10), GenerateAgentsMD()])
+      const results = await SearchKnowledge('', 10)
       setEntries(results.map((r: any) => r.entry))
       const empty = await IsKnowledgeBaseEmpty()
       setKbEmpty(empty)
@@ -76,7 +72,7 @@ function Dashboard() {
     try {
       poll = setInterval(async () => {
         try {
-          const p = await (Call as any).ByName('main.ChronoService.GetIndexPhase')
+          const p = await Call.ByName('main.ChronoService.GetIndexPhase')
           if (p && typeof p === 'string' && p !== '') setIndexPhase(p)
         } catch {}
       }, 500)
@@ -84,7 +80,7 @@ function Dashboard() {
       await IndexProject()
       clearInterval(poll)
       setIndexPhase('')
-      toast.success('项目结构扫描完成')
+      toast.success('脚手架构建完成')
       setKbEmpty(false)
       search('')
     } catch (e: any) {
@@ -107,6 +103,37 @@ function Dashboard() {
       }
     } catch (e) {
       toast.error('加载当前项目失败: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+
+  const deleteEntry = async (entry: StructuredEntry) => {
+    setDeletingEntryId(entry.id)
+    try {
+      const removed: StructuredEntry | null = await Call.ByName('main.ChronoService.DeleteEntry', entry.id)
+      setEntries(prev => prev.filter(item => item.id !== entry.id))
+      setDeletedEntry(removed ?? entry)
+      setKbEmpty(await IsKnowledgeBaseEmpty())
+      toast.warning('已删除知识条目，可点击撤销删除恢复')
+    } catch (e) {
+      toast.error('删除条目失败: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setDeletingEntryId(null)
+    }
+  }
+
+  const undoDeleteEntry = async () => {
+    if (!deletedEntry) return
+    setRestoringEntry(true)
+    try {
+      await Call.ByName('main.ChronoService.RestoreEntry', deletedEntry)
+      setDeletedEntry(null)
+      setKbEmpty(false)
+      await search(query)
+      toast.success('已恢复知识条目')
+    } catch (e) {
+      toast.error('撤销删除失败: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setRestoringEntry(false)
     }
   }
 
@@ -153,30 +180,30 @@ function Dashboard() {
           marginBottom: 16,
           textAlign: 'center'
         }}>
-          <div style={{ fontSize: 14, color: '#d29922', marginBottom: 8 }}>
-            知识库为空。Agent 完成代码修改后，变更会自动显示在这里。如需初始化项目结构，请点击下方按钮。
-          </div>
-          {indexing ? (
-            <div style={{ textAlign: 'center' }}>
-              <div style={{
-                height: 4, background: 'var(--border)', borderRadius: 2,
-                marginBottom: 8, overflow: 'hidden'
-              }}>
-                <div style={{
-                  height: '100%', width: indexPhase === '生成AGENTS.md' ? '90%' : indexPhase === 'AI摘要' ? '70%' : indexPhase === 'AST代码分析' ? '50%' : indexPhase === '安装GitHook' ? '30%' : '10%',
-                  background: 'var(--accent)', borderRadius: 2,
-                  transition: 'width 0.5s ease'
-                }} />
+              <div style={{ fontSize: 14, color: '#d29922', marginBottom: 8 }}>
+                知识库为空。Agent 完成代码修改后，变更会自动显示在这里。如需初始化项目结构（零 AI 成本），请点击下方按钮。
               </div>
-              <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                {indexPhase || '扫描中...'}
-              </span>
-            </div>
-          ) : (
-            <button className="btn btn-primary" onClick={indexProject} disabled={loading}>
-              {loading ? '扫描中，请稍候...' : '扫描项目结构'}
-            </button>
-          )}
+              {indexing ? (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{
+                    height: 4, background: 'var(--border)', borderRadius: 2,
+                    marginBottom: 8, overflow: 'hidden'
+                  }}>
+                    <div style={{
+                      height: '100%', width: indexPhase === '导入Git历史' ? '80%' : indexPhase === '安装GitHook' ? '60%' : indexPhase === 'AST代码分析' ? '40%' : '20%',
+                      background: 'var(--accent)', borderRadius: 2,
+                      transition: 'width 0.5s ease'
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                    {indexPhase || '扫描中...'}
+                  </span>
+                </div>
+              ) : (
+                <button className="btn btn-primary" onClick={indexProject} disabled={loading}>
+                  {loading ? '扫描中，请稍候...' : '构建项目脚手架'}
+                </button>
+              )}
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>Agent 可通过 record_change 工具上报代码变更</div>
         </div>
       )}
@@ -198,33 +225,35 @@ function Dashboard() {
             {loading ? '刷新中...' : '🔄 刷新'}
           </button>
         </div>
-
-        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            className={agentsMDEnabled ? 'btn btn-primary' : 'btn btn-secondary'}
-            onClick={async () => {
-              const next = !agentsMDEnabled
-              setAgentsMDEnabled(next)
-              try { await (Call as any).ByName('main.ChronoService.SetAgentsMDEnabled', next) } catch {}
-            }}
-            style={{ fontSize: 12, padding: '4px 12px' }}
-          >
-            {agentsMDEnabled ? '📝 AGENTS.md: 开' : '📝 AGENTS.md: 关'}
-          </button>
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-            {agentsMDEnabled ? '每次变更后自动更新' : '已禁用自动生成，节省 token'}
-          </span>
-        </div>
-
         <div className="entry-list">
+          {deletedEntry && (
+            <div className="undo-delete-banner">
+              <span>已删除“{deletedEntry.summary}”</span>
+              <button className="btn btn-secondary" onClick={undoDeleteEntry} disabled={restoringEntry}>
+                {restoringEntry ? '恢复中...' : '撤销删除'}
+              </button>
+            </div>
+          )}
           {entries.map(entry => (
             <div className="entry-item" key={entry.id}>
-              <div className="entry-meta">
-                <span>{new Date(entry.timestamp).toLocaleString()}</span>
-                <span>·</span>
-                <span>Session: {entry.session_id}</span>
+              <div className="entry-header">
+                <div>
+                  <div className="entry-meta">
+                    <span>{new Date(entry.timestamp).toLocaleString()}</span>
+                    <span>·</span>
+                    <span>Session: {entry.session_id}</span>
+                  </div>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>{entry.summary}</h4>
+                </div>
+                <button
+                  className="entry-delete-btn"
+                  onClick={() => deleteEntry(entry)}
+                  disabled={deletingEntryId === entry.id || restoringEntry}
+                  aria-label={`删除知识条目：${entry.summary}`}
+                >
+                  {deletingEntryId === entry.id ? '删除中...' : '删除'}
+                </button>
               </div>
-              <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>{entry.summary}</h4>
               <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 6 }}>
                 <strong>设计决策：</strong>{entry.design_decision}
               </p>

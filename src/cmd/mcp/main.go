@@ -4,8 +4,8 @@ package main
 
 import (
 	"ChronoDraftAEx/internal/codeanalysis"
-	"ChronoDraftAEx/internal/memorycore"
 	"ChronoDraftAEx/internal/mcp"
+	"ChronoDraftAEx/internal/memorycore"
 	"fmt"
 	"log"
 	"os"
@@ -161,10 +161,6 @@ func runCaptureCommit() {
 		}
 	}
 
-	// 刷新 AGENTS.md
-	if err := core.RefreshAgentsMD(); err != nil {
-		log.Printf("警告: 刷新 AGENTS.md 失败: %v", err)
-	}
 }
 
 func min(a, b int) int {
