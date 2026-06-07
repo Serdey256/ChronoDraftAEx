@@ -109,6 +109,22 @@ func (v *VectorDB) DeleteEntry(ctx context.Context, entryID string) error {
 
 // Search 语义搜索向量库
 func (v *VectorDB) Search(ctx context.Context, query string, topK int) ([]models.SearchResult, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return v.listRecentEntries(ctx, topK)
+	}
+
+	tagResults, matchedTerms, err := v.searchByTags(ctx, query, topK)
+	if err != nil {
+		return nil, err
+	}
+	if len(tagResults) > 0 && len(matchedTerms) == len(splitSearchTerms(query)) {
+		return tagResults, nil
+	}
+
 	// 生成查询向量
 	queryVec, err := v.generateEmbedding(ctx, query)
 	if err != nil {
@@ -167,6 +183,14 @@ func (v *VectorDB) Search(ctx context.Context, query string, topK int) ([]models
 
 // fallbackKeywordSearch 当嵌入 API 不可用时的关键词回退搜索
 func (v *VectorDB) fallbackKeywordSearch(ctx context.Context, query string, topK int) ([]models.SearchResult, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return v.listRecentEntries(ctx, topK)
+	}
+
 	rows, err := v.db.QueryContext(ctx,
 		`SELECT entry_id, session_id, summary, design_decision, impact_analysis, tags, timestamp
 		 FROM vectors
@@ -204,6 +228,153 @@ func (v *VectorDB) fallbackKeywordSearch(ctx context.Context, query string, topK
 		})
 	}
 	return results, rows.Err()
+}
+
+func (v *VectorDB) listRecentEntries(ctx context.Context, topK int) ([]models.SearchResult, error) {
+	rows, err := v.db.QueryContext(ctx,
+		`SELECT entry_id, session_id, summary, design_decision, impact_analysis, tags, timestamp
+		 FROM vectors ORDER BY timestamp DESC LIMIT ?`,
+		topK,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []models.SearchResult
+	for rows.Next() {
+		var entryID, sessionID, summary, decision, impact, tagsJSON, ts string
+		if err := rows.Scan(&entryID, &sessionID, &summary, &decision, &impact, &tagsJSON, &ts); err != nil {
+			continue
+		}
+		parsedTime, _ := time.Parse(time.RFC3339, ts)
+		var tags []string
+		json.Unmarshal([]byte(tagsJSON), &tags)
+		results = append(results, models.SearchResult{
+			Score: 0.5,
+			Entry: models.StructuredEntry{
+				ID:             entryID,
+				SessionID:      sessionID,
+				Timestamp:      parsedTime,
+				Summary:        summary,
+				DesignDecision: decision,
+				ImpactAnalysis: impact,
+				Tags:           tags,
+			},
+		})
+	}
+	return results, rows.Err()
+}
+
+func (v *VectorDB) searchByTags(ctx context.Context, query string, topK int) ([]models.SearchResult, map[string]struct{}, error) {
+	terms := splitSearchTerms(query)
+	if len(terms) == 0 {
+		return nil, nil, nil
+	}
+
+	rows, err := v.db.QueryContext(ctx,
+		`SELECT entry_id, session_id, summary, design_decision, impact_analysis, tags, timestamp
+		 FROM vectors ORDER BY timestamp DESC`,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var results []models.SearchResult
+	matchedTerms := make(map[string]struct{}, len(terms))
+	for rows.Next() {
+		var entryID, sessionID, summary, decision, impact, tagsJSON, ts string
+		if err := rows.Scan(&entryID, &sessionID, &summary, &decision, &impact, &tagsJSON, &ts); err != nil {
+			continue
+		}
+
+		var tags []string
+		json.Unmarshal([]byte(tagsJSON), &tags)
+		termMatches := matchingTagTerms(tags, terms)
+		matchCount := len(termMatches)
+		if matchCount == 0 {
+			continue
+		}
+		for term := range termMatches {
+			matchedTerms[term] = struct{}{}
+		}
+
+		parsedTime, _ := time.Parse(time.RFC3339, ts)
+		results = append(results, models.SearchResult{
+			Score: float64(matchCount),
+			Entry: models.StructuredEntry{
+				ID:             entryID,
+				SessionID:      sessionID,
+				Timestamp:      parsedTime,
+				Summary:        summary,
+				DesignDecision: decision,
+				ImpactAnalysis: impact,
+				Tags:           tags,
+			},
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			return results[i].Entry.Timestamp.After(results[j].Entry.Timestamp)
+		}
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > topK {
+		results = results[:topK]
+	}
+	return results, matchedTerms, nil
+}
+
+func splitSearchTerms(query string) []string {
+	replacer := strings.NewReplacer(",", " ", "，", " ", "、", " ", ";", " ", "；", " ")
+	parts := strings.Fields(replacer.Replace(strings.TrimSpace(query)))
+	if len(parts) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(parts))
+	terms := make([]string, 0, len(parts))
+	for _, part := range parts {
+		normalized := strings.ToLower(strings.TrimSpace(part))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		terms = append(terms, normalized)
+	}
+	return terms
+}
+
+func matchingTagTerms(tags []string, terms []string) map[string]struct{} {
+	if len(tags) == 0 || len(terms) == 0 {
+		return nil
+	}
+
+	tagSet := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		normalized := strings.ToLower(strings.TrimSpace(tag))
+		if normalized == "" {
+			continue
+		}
+		tagSet[normalized] = struct{}{}
+	}
+
+	matches := make(map[string]struct{})
+	for _, term := range terms {
+		if _, ok := tagSet[term]; ok {
+			matches[term] = struct{}{}
+		}
+	}
+	return matches
 }
 
 // Close 关闭向量数据库连接
