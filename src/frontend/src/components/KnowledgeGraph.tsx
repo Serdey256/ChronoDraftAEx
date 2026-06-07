@@ -228,6 +228,7 @@ function KnowledgeGraph() {
     // Double-click handler for collapse/expand on directory nodes
     node.on('dblclick', (event: MouseEvent, d: SimNode) => {
       if (d.type === 'directory' || d.type === 'module') {
+        event.preventDefault()
         event.stopPropagation()
         toggleCollapse(d.id, allNodes, allLinks)
       }
@@ -299,6 +300,7 @@ function KnowledgeGraph() {
       .on('end', () => svg.style('cursor', 'grab'))
 
     svg.call(zoom)
+    svg.on('dblclick.zoom', null)
     svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2))
   }
 
